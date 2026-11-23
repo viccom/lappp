@@ -209,7 +209,14 @@ pub const VL_DEFAULT_MODEL: &str = "auto/deepseek-v4.1-flash";
 /// The gateway is Anthropic Messages compatible.
 pub const VL_ANTHROPIC_VERSION: &str = "2023-06-01";
 /// Reasoning models spend part of this budget on thinking.
-pub const VL_MAX_TOKENS: usize = 1500;
+///
+/// The gateway routes to models that emit a thinking block even though the
+/// request disables it, and the thinking tokens come out of the same budget.
+/// With 1500 the thinking of a hard photo (four people, a toy gun, an
+/// overcast sky) reached 1463 tokens, the answer was cut in the middle of
+/// the JSON, and the call was paid for with no annotation to show for it.
+/// The budget therefore has to hold a long thinking *and* the caption.
+pub const VL_MAX_TOKENS: usize = 4000;
 /// The gateway may take a long time before the first byte.
 pub const VL_REQUEST_TIMEOUT_SECS: u64 = 180;
 
