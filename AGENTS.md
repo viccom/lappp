@@ -143,31 +143,25 @@ pwsh -File scripts/build-windows.ps1 -BuildProfile release   # 默认 release
 
 ## 7. 上游同步流程
 
-**必须**走 [`docs/dev/SOP-上游同步升级.md`](docs/dev/SOP-上游同步升级.md)（含基线记录、跨文件契约对账、七道门禁、真库冒烟断言、部署/回滚矩阵、事故索引）。要点：
+**必须**按 [`docs/dev/SOP-上游同步升级.md`](docs/dev/SOP-上游同步升级.md) v2 操作；每次同步另存 [`docs/dev/SYNC-template.md`](docs/dev/SYNC-template.md) 为独立记录。旧执行事实归档于 [`docs/dev/SOP-上游同步升级-历史记录.md`](docs/dev/SOP-上游同步升级-历史记录.md)，不作现行规范或本次验证证据。
 
-```bash
-git fetch upstream
-git checkout main && git merge --ff-only upstream/main && git push origin main
-git checkout develop && git rebase main     # 或 merge；冲突只可能出现在自有提交
-```
-
-- 自有改动纪律：**每个功能一个小提交系列**，改动集中在新增文件 + 少数标记过的既有文件锚点，不重排上游代码——rebase 时冲突面才小。
-- 上游删除符号后必须全仓搜残留引用（`scripts/check-cross-refs.mjs` 只覆盖命令/i18n key/快捷键三类，其余靠 §3.1 的人工清单）。
-- 上游可能带着**自己没跑过的红测试**（v0.4.0 的 `offlineCatalog` 就是），先在干净上游工作树复现再决定隔离还是修复——**不要默认上游是对的，也不要默认自己错了**。
-- 门禁不过、或清单里存在「未确证」项，**不得合入**。
+- Git 仅 fetch 上游；本地 `main` 仅能快进到记录的冻结 SHA；在隔离工作树内用 merge 集成到 `develop`，**禁止 rebase**。审核与文件差异必须基于完整 SHA，覆盖新增、删除、重命名，重点检查 `src-vite/`、`src-tauri/src/`、`src-tauri/crates/`。
+- SOP 不默认包含 merge commit、共享分支推进或 push。创建 merge commit、推进 `main` / `develop`、push 至各 origin 分支均须明确授权；真实数据目录 smoke、覆盖 `D:\LapPortable`、发布亦各需独立授权。不得要求用真实用户图库测试。
+- 上游删除或移动符号后必须全仓检查残留引用。`scripts/check-cross-refs.mjs` 仅覆盖命令/handler、i18n 与 `en.json` fallback、shortcut ID；locale 完整键集合须另查，其他协议与跨文件契约按 SOP 核验。
+- 门禁、迁移隔离或路径检查有失败、未执行或未确证项，**不得推进共享分支**。记录实际命令、cwd、环境、退出码与日志；历史报告不代替当前证据。
 
 ---
 
 ## 8. 部署与回滚
 
-| profile | 二进制 | 数据目录 | 用途 |
+| profile | 二进制 | 默认数据目录 | 用途 |
 |---|---|---|---|
-| debug | `build\windows\debug\*` | `%LOCALAPPDATA%\com.julyx10.lap.debug` | 调试 / 真库实测（用户的 2,773 项库在此） |
-| release | `build\windows\*` | `%LOCALAPPDATA%\com.julyx10.lap` | 产品形态；直接换 exe 会看到另一个库 |
+| debug | `build\windows\debug\lappp.exe`、`lappp-client.exe`、`lappp-server.exe` | `%LOCALAPPDATA%\com.julyx10.lap.debug` | 调试 / 隔离验证；真实数据 smoke 需独立授权与路径审查 |
+| release | `build\windows\lappp.exe`、`lappp-client.exe`、`lappp-server.exe` | `%LOCALAPPDATA%\com.julyx10.lap` | 产品形态；与 debug 使用不同默认数据目录 |
 
-- 覆盖 `D:\LapPortable` 前**必须**时间戳备份（`backup-<ts>/` 目录或 `.bak-<ts>` 后缀），替换后核对：内嵌 bundle hash 与本次构建一致、`grep -a -c remote-debugging-port` = 0。
-- `lappp-server.exe` 不内嵌前端（运行时读 `--web-dir`/`resources/web`），前端变更时无需更新它。
-- 回滚：代码 `git revert`；部署把备份改回原名；同步本身不改库数据，但上游含 SQLite 迁移时回滚前先备份 `libraries\`。
+- 覆盖 `D:\LapPortable` 需独立授权并先时间戳备份**所有实际替换文件**，随后按同步 SOP 核验构建产物及不含 `--remote-debugging-port`；不得只备份 exe。
+- `lappp-server.exe` 不内嵌前端（运行时读 `--web-dir`/`resources/web`），仅前端变更时无需更新它。
+- 回滚：代码按 merge 提交选择 `git revert -m 1 <merge-commit>`；部署将备份的所有文件恢复原名。SQLite 迁移须先在隔离副本验证，回滚数据策略按本次同步记录执行。
 
 ---
 
@@ -180,11 +174,9 @@ git checkout develop && git rebase main     # 或 merge；冲突只可能出现�
 
 ---
 
-## 10. 开放事项（接手者可查证后再动）
+## 10. 当前开放事项
 
-1. ~~`tests/imageNavigator.test.ts`、`montageLayout.test.ts` 未挂到任何 `test:*` 脚本~~ **已修（2026-11-19）**：两个文件移植为 `.mjs`（经 `tests/helpers/ts-module.mjs` 加载 TS 模块），分别接入 `test:navigator` / `test:montage`；孤儿守卫同时拒绝 `.test.ts`。
-2. ~~SOP §3.2 写着「待建 `scripts/smoke-desktop.ps1`」、「34 域」~~ **已修**（脚本是 `.mjs` 且已落地；域数现为 **36**）。
-3. ~~`scripts/README.md` 未收录 fork 新增脚本、且称 PS 模型下载脚本只做存在性检查~~ **已修**（五个 fork 脚本已补录，SHA-256 的说法已更正）。
-4. ~~`main` 落后 `upstream/main`~~ **已修**：`main` 已快进到 `3e265ce5` 并推送；7 个上游提交已合并进 `develop`（merge，非 rebase——不改写历史、不需要强推）。合并只冲突 `README.md` 一个文件（上游加了一张预览截图），其余自动合并；**上游新带进来 1 个类型错**（`statusBarFields: null` 默认值把类型收窄成 `null`），已用 JSDoc 标注修掉。
-5. 根 `README.md` 是本 fork 的说明；上游英文原文见 [upstream](https://github.com/julyx10/lap#readme)，`i18n/README.*.md` 是上游译本（上游这次同步了 16 份译本）。
-6. 仍未做：`contrib/aur` 配方还钉在上游 `lap` 0.3.2，fork 未维护；`docs/.vitepress` 文档站仍指向上游（发布页 base=`/lap/`）。
+- `contrib/aur` 配方仍指向上游 `lap` 0.3.2，fork 未维护。
+- `docs/.vitepress` 文档站仍指向上游（发布页 base=`/lap/`）。
+- `docs/dev/launch-portable-check.ps1` 仍硬编码旧程序名 `Lap.exe`；更新前须确认目标及脚本安全行为，并在修复后实测。
+- 项目已完成事项、同步历史和门禁建设过程归档于 `docs/dev/SOP-上游同步升级-历史记录.md`，不在本开放清单重复罗列。

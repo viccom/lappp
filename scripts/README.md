@@ -1,6 +1,6 @@
 # Scripts
 
-Utility scripts for the Lap project. Sections 1–2 and the downloader tests are upstream's; sections 3–5 are this fork's additions.
+Utility scripts for the Lap project. Sections 1–2 and the downloader tests are upstream's; sections 3–6 are this fork's additions.
 
 ## 1. download_models
 
@@ -100,13 +100,25 @@ npm run typecheck:gate          # fail on new errors
 node ../scripts/typecheck-gate.mjs --update   # re-baseline (emergency only)
 ```
 
-## 5. check-cross-refs / run-frontend-tests / smoke-desktop (fork)
+## 5. backup-library-db (fork)
+
+Creates a standalone SQLite snapshot using Python's standard-library `sqlite3.Connection.backup()` API (not a filesystem copy), then verifies the destination with `PRAGMA integrity_check`. The source is opened read-only. The target must not exist and its parent directory must already exist; a failed backup removes only the target file created by that invocation. On POSIX, the target remains mode `0600`; on Windows, its ACL is inherited from the parent directory, so use a secured target parent. The report includes source/destination `user_version` and best-effort row counts for `afiles`, `albums`, and `afolders` (missing/unreadable tables are reported as unavailable).
+
+### Usage
+
+```bash
+python -I scripts/backup-library-db.py SOURCE_DB TARGET_DB
+```
+
+This snapshots **only the DB**. It does not copy app-config, sidecars, thumbnail cache, or external `db_storage_dir` targets. Before GUI smoke, the caller must separately verify the app-config `db_storage_dir`, thumbnail cache directory, secret file, and images roots; this tool does not back those up or validate their contents.
+
+## 6. check-cross-refs / run-frontend-tests / smoke-desktop (fork)
 
 | Script | npm alias | What it proves |
 |---|---|---|
 | `check-cross-refs.mjs` | `npm run test:crossrefs` | Three closed sets: frontend `invoke('literal')` ↔ `generate_handler!` (both feature variants), i18n literals/dynamic prefixes ↔ `locales/en.json`, shortcut action ids ↔ `SHORTCUTS`. Any dangling reference exits 1. |
 | `run-frontend-tests.mjs` | `npm run test` | Runs every `test:*` domain in order, prints PASS/FAIL per domain, exits 1 on any failure. |
-| `smoke-desktop.mjs` | `npm run smoke:desktop` | Real-binary smoke: boots the desktop build against a real data directory, asserts over WebView2 CDP that the grid paints thumbnails, that they survive scrolling, that a real double-click decodes the original in the viewer, and that the console is error-free. It temporarily patches `additionalBrowserArgs` into `src-tauri/tauri.windows.conf.json` and restores the exact original bytes in a `finally` — **a build made with the debug port must never ship**. |
+| `smoke-desktop.mjs` | `npm run smoke:desktop` | Real-binary smoke: requires an explicit `LAP_SMOKE_DATA_DIR` and boots the desktop build against that directory; it asserts over WebView2 CDP that the grid paints thumbnails, they survive scrolling, a real double-click decodes the original in the viewer, and the console is error-free. It temporarily patches `additionalBrowserArgs` into `src-tauri/tauri.windows.conf.json`, then restores the exact original bytes and rebuilds clean on normal completion/catchable shutdown. Forced termination or power loss requires manual config restoration and clean rebuild before further use. **Never use a real data directory without separate authorization and full path isolation.** |
 
 ### Usage
 

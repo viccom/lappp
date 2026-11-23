@@ -1,279 +1,404 @@
-# SOP：lappp 上游同步升级（upstream sync）
+# SOP：上游同步升级 v2
 
-> 版本：v1（2026-11-18，依据 v0.4.0 同步事故复盘制定）
-> 适用：把 upstream `julyx10/lap` 的新版本合入本 fork 的 `develop`。
-> 事故样本：v0.4.0 同步（07a074c5）保留了上游已删除动作的菜单引用
-> （`file.moveToFolder`），菜单构建在 Thumbnail/MediaViewer 的 render 里执行，
-> Vue 把 render 异常吞成空注释节点 → 宫格空缺 + 查看器白屏，且无任何错误提示。
-> 全过程见《排查-2026-11-18-宫格空缺与原图白屏.md》。
+> 适用：评估并将 `upstream/main` 的冻结提交集成到本 fork。历史执行证据见 [历史记录](SOP-上游同步升级-历史记录.md)；每次执行从 [同步记录模板](SYNC-template.md) 另存一份。本文是当前唯一操作规范。
 
-## 0. 原则（红线，违反任何一条不得合入）
+## 原则与停机条件
 
-1. **门禁不过不合入**；测试清单上存在「未确证」项 = 门禁不过（v0.4.0 的 E2E 清单
-   自己写着「大图渲染未确证」，仍然放行，用户实测即炸）。
-2. **「构建通过」≠「能跑」≠「渲染正确」**：必须用真实图库做真机冒烟。
-3. **git 不替你发现语义冲突**：上游删除的符号/id/key，merge 无文本冲突也可能在
-   fork 侧留下悬空引用——同步后必须做**跨文件契约对账**（§3.1）。
-4. **错误日志里没有「噪音」，只有未分类信号**：冒烟/排查时逐条归类 console 错误，
-   不得按关键词过滤掉（本次事故的根因异常一直可见，却被当噪音滤掉）。
-5. **数据目录随构建形态走**：debug → `%LOCALAPPDATA%\com.julyx10.lap.debug`，
-   release → `%LOCALAPPDATA%\com.julyx10.lap`。换 profile 部署前先确认用户库在
-   哪个目录，否则用户看到的库会"消失"。
+- 只 fetch 上游；本地 `main` 只允许在候选门禁通过后快进到已冻结 SHA；`develop` 只通过 merge 集成，不 rebase、不改写历史。SOP 不默认包含任何 push。
+- 在取得独立明确授权前，不创建任何 commit、不推进本地 `main` / `develop`、不 push、不运行真实图库 smoke、不覆盖 `D:\LapPortable`、不发布。创建隔离集成 commit、快进本地 `main`、快进 `develop`、push、隔离 smoke、真实数据 smoke、部署和发布均各自授权；一个动作的授权不代表其他动作授权。
+- 比较必须使用记录的完整 SHA，不能用 `HEAD~1` 或浮动 `upstream/main` 作为审核范围。任何失败、未知、未隔离的数据路径或未决高风险都是 **NO-GO**；停止并报告，不靠跳过门禁放行。
+- 保留用户工作区和分支；不清理、不覆盖现有未提交改动。开始前要求干净工作区；不干净则停止。
 
-## 1. 同步前（准备与基线）
+## 0. 固定目录与准备
 
-- [ ] `develop` 干净，无未提交改动；确认部署窗口（用户没在用 portable 版）。
-- [ ] 读上一份 `SYNC-*.md` 评估与本 SOP；上游 release notes / 变更摘要过一遍。
-- [ ] **记录基线**（同步前必须知道"绿"长什么样，否则之后分不清是同步引入还是本来就红）：
-  - [ ] 前端各域 `npm run test:*`（在 `src-vite/`）逐域记录 pass/fail 数；
-  - [ ] `cargo test --workspace` 记录 passed/failed/ignored；
-  - [ ] `bash docs/dev/…` 既有冒烟脚本可跑通。
-- [ ] 快照当前数据目录大小（同步不应改库数据；若有 schema 迁移，先备份库目录）。
+以下命令均从仓库根 `D:\MyCodes\AI-album\lap` 执行，除非另有明确标注。同步记录先写到仓库外用户目录下以本次 `syncId` 命名的新文件；这既避免把半成品写进基线工作树，也不构成提交授权。只有门禁完成后，才可按 §6 将最终记录复制到隔离候选中。上一记录只作历史参考，不替代本次检查。
 
-## 2. 同步操作（merge）
-
-按 `AGENTS.md`「分支与同步策略」：
-
-```bash
-git fetch upstream
-git checkout main && git merge --ff-only upstream/main && git push origin main
-git checkout develop && git merge main        # 或 rebase，按当时评估文档定
+```powershell
+# cwd: D:\MyCodes\AI-album\lap
+$ErrorActionPreference = 'Stop'
+$repoRoot = 'D:\MyCodes\AI-album\lap'
+$syncTime = Get-Date
+$syncId = $syncTime.ToString('yyyyMMdd-HHmmss')
+$syncBranch = "sync/$syncId"
+$isolatedWorktree = [System.IO.Path]::GetFullPath((Join-Path $env:TEMP "lap-sync-worktree-$syncId"))
+$recordDate = $syncTime.ToString('yyyy-MM-dd')
+$recordName = "SYNC-$recordDate-$syncId.md"
+$recordPath = Join-Path $env:USERPROFILE "lap-sync-record-$syncId.md"
+if (-not [System.IO.Path]::IsPathFullyQualified($recordPath)) { throw 'external sync record path must be absolute' }
+function Invoke-CheckedNative {
+    param([string]$Program, [string[]]$Arguments)
+    $output = & $Program @Arguments
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) { throw "$Program $($Arguments -join ' ') failed with exit $exitCode" }
+    return $output
+}
+Set-Location $repoRoot
+$statusLines = @(Invoke-CheckedNative git @('status', '--short', '--branch'))
+$statusLines
+$initialChanges = @(Invoke-CheckedNative git @('status', '--porcelain'))
+if ($initialChanges.Count -ne 0) { throw 'working tree is not clean; stop without changing user files' }
+$currentBranch = ((Invoke-CheckedNative git @('branch', '--show-current')) -join '').Trim()
+if ($currentBranch -ne 'develop') { throw 'start on develop; stop and confirm the intended branch' }
+if (Test-Path -LiteralPath $isolatedWorktree) { throw "isolated worktree path already exists: $isolatedWorktree" }
+if (Test-Path -LiteralPath $recordPath) { throw "external sync record already exists: $recordPath" }
+$remoteNames = @(Invoke-CheckedNative git @('remote'))
+if ($remoteNames -notcontains 'upstream') { throw 'upstream remote is missing' }
+$upstreamUrl = ((Invoke-CheckedNative git @('remote', 'get-url', 'upstream')) -join '').Trim()
+if ($upstreamUrl -match '://[^/@]+@') { throw 'upstream URL contains credentials; do not display or record it' }
+if ($upstreamUrl -notmatch '(^|[:/])julyx10/lap(\.git)?$') { throw 'upstream URL is not the expected julyx10/lap repository' }
+$developSha = ((Invoke-CheckedNative git @('rev-parse', 'develop')) -join '').Trim()
+$mainSha = ((Invoke-CheckedNative git @('rev-parse', 'main')) -join '').Trim()
+$statusText = ($statusLines -join '; ').Replace('|', '\|')
+$templateText = Get-Content -LiteralPath (Join-Path $repoRoot 'docs/dev/SYNC-template.md') -Raw -Encoding utf8
+Set-Content -LiteralPath $recordPath -Value $templateText -NoNewline -Encoding utf8
+$record = Get-Content -LiteralPath $recordPath -Raw
+$record = $record.Replace('| 同步日期 / 操作者 | |', "| 同步日期 / 操作者 | $($syncTime.ToString('yyyy-MM-dd HH:mm:ss zzz')) / 需填写操作者 |")
+$record = $record.Replace('| 当前分支 / 工作区 | |', "| 当前分支 / 工作区 | $currentBranch；$statusText |")
+$record = $record.Replace('| ``develop`` 基线 | |', "| ``develop`` 基线 | $developSha |")
+$record = $record.Replace('| 本地 ``main`` 基线（旧 SHA） | |', "| 本地 ``main`` 基线（旧 SHA） | $mainSha |")
+Set-Content -LiteralPath $recordPath -Value $record -NoNewline -Encoding utf8
+Write-Output "syncId=$syncId developSha=$developSha mainSha=$mainSha isolatedWorktree=$isolatedWorktree recordPath=$recordPath"
 ```
 
-**冲突裁决纪律**：
+**GO：** 当前分支为干净的 `develop`；`upstream` 远端地址已核实为 `julyx10/lap`；记录及隔离工作树路径均为新路径；已明确拟评估目标，并准备了上次记录的完整 upstream target SHA。否则停止。`$recordPath` 在仓库外，半成品不会弄脏基线工作树；写入记录不授权任何提交或分支推进。此时仅模板快照与基本基线已写入；提交裁决、冲突处理、门禁、环境与授权结果须按执行事实逐项补全，不得复制仍含空项的模板记录。
 
-- 上游**删除**的导出符号/类型成员/常量/id —— 解决冲突时采纳删除后，必须
-  **全仓 grep 残留引用**（本 fork 自有代码可能还在用）。这是本次事故的精确形态：
-  shortcuts.ts 采纳了上游删除，fileMenu.ts 的引用漏网。
-- 命令模板（merge 完成后立刻执行）：
+## 1. 冻结快照与差异评估
 
-```bash
-# 列出本次 upstream 范围内被删除的行里「像导出符号/id」的候选
-git diff --diff-filter=M HEAD~1 -- src-vite/src src-tauri/src \
-  | grep '^-' | grep -oE "id: '[a-zA-Z.]+('|[A-Za-z]+')" | sort -u
-# 对每个候选 id / 符号名，全仓搜残留（示例）
-grep -rn "file.moveToFolder" --include="*.ts" --include="*.vue" src-vite/src
+先保存 `develop`、本地 `main` 和上游起点 SHA，再 fetch。核对本地 `main` 与同步记录中的上一次上游目标；本地 `main` 是 fork 提交的祖先基线，不一定等于上一次 upstream SHA。必须同时核对上一次 target 等于当前 `develop`/上游的 merge-base；否则记录实际起点并暂停，先人工确认 fetch 窗口。核对确认后冻结 fetch 前 `upstream/main` 的完整 SHA 为起点，fetch 后固定目标 SHA；之后所有审查固定在该 SHA，即使远端分支继续移动也不扩大范围。
+
+```powershell
+# cwd: D:\MyCodes\AI-album\lap
+$lastRecordedTarget = Read-Host '输入上次 SYNC 记录的 upstream target SHA；无记录或与当前 upstream/main 不一致时停止'
+if ($lastRecordedTarget -notmatch '^[0-9a-fA-F]{40,64}$') { throw 'a previously recorded complete upstream target SHA is required' }
+$upstreamBaseSha = ((Invoke-CheckedNative git @('rev-parse', 'upstream/main')) -join '').Trim()
+if ($lastRecordedTarget -ne $upstreamBaseSha) { throw 'upstream moved since prior recorded target; verify intended sync interval before fetch' }
+$mergeBaseBeforeFetch = ((Invoke-CheckedNative git @('merge-base', $developSha, $upstreamBaseSha)) -join '').Trim()
+if ($lastRecordedTarget -ne $mergeBaseBeforeFetch) { throw 'previous upstream target is not the current develop/upstream merge-base; stop and reconcile history' }
+& git merge-base --is-ancestor $lastRecordedTarget $mainSha
+$ancestorExit = $LASTEXITCODE
+if ($ancestorExit -ne 0) { throw "local main is not based on the previous recorded upstream target (exit $ancestorExit); stop and investigate" }
+Invoke-CheckedNative git @('fetch', 'upstream')
+$upstreamUrl = ((Invoke-CheckedNative git @('remote', 'get-url', 'upstream')) -join '').Trim()
+if ($upstreamUrl -match '://[^/@]+@') { throw 'upstream URL contains credentials; stop and do not record it' }
+if ($upstreamUrl -notmatch '(^|[:/])julyx10/lap(\.git)?$') { throw 'upstream URL changed; stop and revalidate source' }
+$upstreamUrl = $upstreamUrl -replace '\.git$', ''
+$record = Get-Content -LiteralPath $recordPath -Raw
+$record = $record.Replace('| 上游来源 / fetch 时间 | |', "| 上游来源 / fetch 时间 | $($upstreamUrl -replace '^https://', '') / $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz') |")
+Set-Content -LiteralPath $recordPath -Value $record -NoNewline -Encoding utf8
+$upstreamTargetSha = ((Invoke-CheckedNative git @('rev-parse', 'upstream/main')) -join '').Trim()
+$mergeBaseSha = ((Invoke-CheckedNative git @('merge-base', $developSha, $upstreamTargetSha)) -join '').Trim()
+$forkBaseSha = $mainSha
+if ($lastRecordedTarget -ne $mergeBaseSha) { throw 'upstream interval base differs from the develop/upstream merge-base; stop and reconcile history before assessing commits' }
+$record = Get-Content -LiteralPath $recordPath -Raw
+$record = $record.Replace('| `develop` 基线 | |', "| ``develop`` 基线 | $developSha |")
+$record = $record.Replace('| 本地 `main` 基线（旧 SHA） | |', "| 本地 ``main`` 基线（旧 SHA） | $mainSha |")
+$record = $record.Replace('| 上游基线（同步窗口起点） | |', "| 上游基线（同步窗口起点） | $upstreamBaseSha |")
+$record = $record.Replace('| 上游目标（冻结，不再跟随移动分支） | |', "| 上游目标（冻结，不再跟随移动分支） | $upstreamTargetSha |")
+$record = $record.Replace('| `develop` 与上游目标的 merge-base | |', "| ``develop`` 与上游目标的 merge-base | $mergeBaseSha |")
+Set-Content -LiteralPath $recordPath -Value $record -NoNewline -Encoding utf8
+Write-Output "upstreamBaseSha=$upstreamBaseSha upstreamTargetSha=$upstreamTargetSha mergeBaseSha=$mergeBaseSha"
+Invoke-CheckedNative git @('log', '--reverse', '--format=%H %ad %s', '--date=iso-strict', "$upstreamBaseSha..$upstreamTargetSha")
+Invoke-CheckedNative git @('diff', '--stat', '--find-renames', $upstreamBaseSha, $upstreamTargetSha)
+Invoke-CheckedNative git @('diff', '--name-status', '--find-renames', $upstreamBaseSha, $upstreamTargetSha)
+Invoke-CheckedNative git @('diff', '--stat', '--find-renames', $forkBaseSha, $developSha)
+Invoke-CheckedNative git @('diff', '--name-status', '--find-renames', $forkBaseSha, $developSha)
 ```
 
-- fork 侧改动与上游冲突时，按 `SYNC-*.md` 评估文档的裁决表处理，不现场发明。
+命令将冻结 SHA 写入本次记录；后续比较只使用这些变量或记录的 SHA，不再引用会移动的 `upstream/main`。此处 `$mergeBaseSha` 是冻结的 `develop` 与上游目标共同祖先。对 fork 的文件差异，以记录的本地 `main` SHA 和 `develop` SHA 比较；它描述 fork 当前相对镜像基线的改动范围。所有差异需包含新增、删除、重命名及重命名前后路径。逐提交审查上游变化，并与 fork 差异做路径交集分析，重点检查 `src-vite/`、`src-tauri/src/`、`src-tauri/crates/`。记录每个提交的接收、适配、延后或拒绝决定、价值、迁移 / 安全 / 依赖 / 测试风险和证据。检查删除符号、命令/i18n/shortcut 契约、SQLite 迁移编号、配置 / 数据路径、许可与密钥处理。
 
-## 3. 同步后门禁（按顺序执行，全绿才算过）
+**GO：** 每个上游提交均有可追溯裁决；fork 重叠均已解析；所有迁移、数据、安全、许可及依赖风险有验证策略；记录没有未决高风险。`defer` / `reject` 表示当前冻结目标不得直接合并；必须停止本次同步，或在候选中提出显式、可审查的适配/回退方案并重新评估，不能靠 cherry-pick 绕过冻结目标。否则停止，不进入合并。
 
-| # | 门禁 | 命令 / 方法 | 状态 |
+## 2. 冻结后创建隔离候选
+
+冻结快照和评估完成后、任何本地分支推进之前，在独立工作树中从记录的 `developSha` 建立候选分支，并以冻结的 `$upstreamTargetSha` 执行 no-commit merge。不得先快进本地 `main`：`main` 推进只在候选集成通过门禁后按 §6 单独授权。命令全程明确检查候选分支名、工作树根路径及两侧父提交 SHA。合并目标直接用冻结 SHA，不依赖本地 `main`。
+
+```powershell
+# cwd: D:\MyCodes\AI-album\lap
+Set-Location $repoRoot
+$currentDevelopSha = ((Invoke-CheckedNative git @('rev-parse', 'develop')) -join '').Trim()
+if ($currentDevelopSha -ne $developSha) { throw 'develop changed since snapshot; stop and resnapshot' }
+Invoke-CheckedNative git @('worktree', 'add', '-b', $syncBranch, $isolatedWorktree, $developSha)
+
+# cwd: $isolatedWorktree（重新执行候选检查）
+Set-Location $isolatedWorktree
+$candidateRoot = [System.IO.Path]::GetFullPath(((Invoke-CheckedNative git @('rev-parse', '--show-toplevel')) -join '').Trim())
+if ($candidateRoot -ne $isolatedWorktree) { throw 'candidate worktree root mismatch' }
+$candidateBranch = ((Invoke-CheckedNative git @('branch', '--show-current')) -join '').Trim()
+if ($candidateBranch -ne $syncBranch) { throw 'candidate branch mismatch' }
+$candidateBaseSha = ((Invoke-CheckedNative git @('rev-parse', 'HEAD')) -join '').Trim()
+if ($candidateBaseSha -ne $developSha) { throw 'candidate was not created from frozen develop SHA' }
+$candidateMergeBase = ((Invoke-CheckedNative git @('merge-base', $developSha, $upstreamTargetSha)) -join '').Trim()
+if ($candidateMergeBase -ne $mergeBaseSha) { throw 'merge base differs from frozen snapshot assessment' }
+& git merge --no-commit --no-ff $upstreamTargetSha
+$mergeExit = $LASTEXITCODE
+if ($mergeExit -ne 0) {
+    $unmerged = @(Invoke-CheckedNative git @('diff', '--name-only', '--diff-filter=U'))
+    if ($unmerged.Count -eq 0) { throw "git merge failed without unresolved paths (exit $mergeExit)" }
+    Write-Output "Merge stopped for conflict resolution; unresolved paths: $($unmerged -join ', ')"
+}
+$candidateMergeSha = ((Invoke-CheckedNative git @('rev-parse', 'MERGE_HEAD')) -join '').Trim()
+if ($candidateMergeSha -ne $upstreamTargetSha) { throw 'candidate MERGE_HEAD does not equal frozen upstream target' }
+Write-Output "candidateRoot=$candidateRoot candidateBranch=$candidateBranch candidateBaseSha=$candidateBaseSha candidateMergeSha=$candidateMergeSha mergeExit=$mergeExit"
+```
+
+发生冲突时 `git merge --no-commit` 的非零退出码表示待解决冲突；仅当存在未合并路径时才按冲突流程继续。无冲突时命令停在尚未提交的合并状态。工作树和分支均为隔离候选，不改变共享 `develop` 或本地 `main`。记录保存于 `$recordPath`（仓库外），不得在仓库根创建同步记录。
+
+## 3. 隔离候选冲突处理与审查
+
+在候选工作树解决冲突，遵循逐提交裁决；对上游删除、移动或重命名的内容，在 fork 所有路径全局搜残留。命令、事件、协议、配置、locale 与资源路径改动需查相应契约。每个冲突及其证据写入仓库外同步记录。完成后确认无未合并路径、当前分支及工作树根仍匹配 §2，并核对 `developSha` 和 `$upstreamTargetSha` 是待合并的两个父历史。冲突无法按已记录裁决解决、发现新语义冲突 / 迁移风险，或候选不再是预期基线即为 **NO-GO**；停止，不推进任何分支。
+
+## 4. 条件门禁
+
+只在隔离候选结果上运行。进入前确认 `$isolatedWorktree` 根目录、`$syncBranch` 分支及 `HEAD` / `MERGE_HEAD` 分别对应记录的 `$developSha` / `$upstreamTargetSha`，不存在未解决冲突。上游未触及某些领域时可将专门检查记为“不适用”，说明依据；核心前端测试、类型门禁、前端构建及适用的 Rust 工作区测试不可省略。任何门禁失败即停止并保留原始输出。
+
+```powershell
+# cwd: D:\MyCodes\AI-album\lap；$isolatedWorktree 来自第 0 节
+Set-Location $repoRoot
+Set-Location $isolatedWorktree
+$candidateRoot = [System.IO.Path]::GetFullPath(((Invoke-CheckedNative git @('rev-parse', '--show-toplevel')) -join '').Trim())
+$candidateBranch = ((Invoke-CheckedNative git @('branch', '--show-current')) -join '').Trim()
+$candidateHead = ((Invoke-CheckedNative git @('rev-parse', 'HEAD')) -join '').Trim()
+$mergeHead = ((Invoke-CheckedNative git @('rev-parse', 'MERGE_HEAD')) -join '').Trim()
+if ($candidateRoot -ne $isolatedWorktree -or $candidateBranch -ne $syncBranch) { throw 'candidate worktree/branch mismatch' }
+if ($candidateHead -ne $developSha -or $mergeHead -ne $upstreamTargetSha) { throw 'candidate merge parents do not match frozen SHAs' }
+$unmerged = @(Invoke-CheckedNative git @('diff', '--name-only', '--diff-filter=U'))
+if ($unmerged.Count -ne 0) { throw 'unresolved candidate conflicts remain' }
+
+# cwd: $isolatedWorktree\src-vite
+Set-Location (Join-Path $isolatedWorktree 'src-vite')
+Invoke-CheckedNative npm.cmd @('run', 'typecheck:gate')
+Invoke-CheckedNative npm.cmd @('run', 'test')
+Invoke-CheckedNative npm.cmd @('run', 'test:crossrefs')
+Invoke-CheckedNative npm.cmd @('run', 'build')
+
+# cwd: $isolatedWorktree\src-tauri
+Set-Location (Join-Path $isolatedWorktree 'src-tauri')
+$env:CARGO_TARGET_DIR = Join-Path $isolatedWorktree 'src-tauri/target'
+Invoke-CheckedNative cargo @('test', '--workspace')
+# 仅当 client feature / 其依赖路径受影响，或发布目标包含 client 时运行
+Invoke-CheckedNative cargo @('test', '-p', 'lappp', '--no-default-features', '--features', 'client')
+
+# cwd: $isolatedWorktree
+Set-Location $isolatedWorktree
+$env:CARGO_TARGET_DIR = Join-Path $isolatedWorktree 'src-tauri/target'
+Invoke-CheckedNative pwsh @('-File', 'scripts/build-windows.ps1', '-BuildProfile', 'debug')
+```
+
+`npm run test` 已包含 `test:crossrefs`；显式再运行一次用于单独记录跨引用门禁。`test:crossrefs` 只验证：前端 `invoke` 与 Tauri handler、i18n 调用与 `en.json` 回退键、shortcut 调用与注册 ID。它不证明所有 locale 文件键齐全；改动 locale 时须另行比较各语言键集合。主题计数有逻辑测试，但没有完整 GUI 主题计数断言。
+
+若上游触及 Rust workspace / feature 边界，运行两条 Cargo 测试；不相关时在记录中列明依据并标为不适用。debug 便携构建是部署候选时需构建三件套。若上述某命令失败，禁止推进分支，禁止以改基线、跳过测试或只报部分测试通过的方式规避。
+
+## 5. 隔离数据库迁移与 GUI smoke（按需；GUI smoke 须独立授权）
+
+迁移风险存在时，必须用隔离数据库副本验证。无需迁移风险时记录理由。**禁止把真实用户图库作为必测项。** GUI smoke 也须取得独立授权并使用独立的应用数据根目录和测试图片副本；不允许仅靠 `--data-dir` 推定隔离完成。迁移快照应从候选工作树执行；真实原始 DB 路径必须在隔离完成、目录 ACL 已确认后才输入脚本。
+
+### 准备 DB 和完整应用数据隔离
+
+备份工具只复制一个 SQLite DB，目标文件必须不存在、父目录须已存在：
+
+```powershell
+# cwd: $isolatedWorktree\src-tauri；候选工作树必须已初始化子模块；快照目标目录由操作者确认 ACL 安全
+Set-Location (Join-Path $isolatedWorktree 'src-tauri')
+$sourceDb = (Read-Host '输入已授权读取且已确认的数据源 SQLite DB 绝对路径').Trim('"')
+$snapshotDb = (Read-Host '输入一个安全目录下新的快照 DB 绝对路径（目标文件必须不存在）').Trim('"')
+if (-not [System.IO.Path]::IsPathFullyQualified($sourceDb) -or -not (Test-Path -LiteralPath $sourceDb -PathType Leaf)) { throw '源 DB 路径无效' }
+if (-not [System.IO.Path]::IsPathFullyQualified($snapshotDb) -or (Test-Path -LiteralPath $snapshotDb)) { throw '快照目标必须是不存在的绝对路径' }
+if (-not (Test-Path -LiteralPath (Split-Path -Parent $snapshotDb) -PathType Container)) { throw '快照目标父目录不存在' }
+Invoke-CheckedNative python @('-I', '..\\scripts\\backup-library-db.py', $sourceDb, $snapshotDb)
+```
+
+核对工具输出中的 `integrity_check: ok`、源与副本的 `user_version`、`afiles` / `albums` / `afolders` 行数相同。该脚本不备份 `app-config.json`、sidecar、缩略图缓存、图片、外部 `db_storage_dir` 或模型；不可把 DB 快照称为完整应用备份。
+
+为每次迁移或 GUI smoke 建立隔离目录，另行准备独立的 `app-config.json` 与数据库副本。应用数据根目录中 `app-config.json` 位于根下，默认库位于 `libraries/`；若 `db_storage_dir` 有自定义值，库则从该配置路径解析。逐项检查配置中所有 library DB 路径、`db_storage_dir`、图片根路径和 `thumbnail_cache_dir`；自定义值不能指向真实资产。未设置自定义 thumbnail cache 时，默认缓存使用平台应用 cache 目录，不自动跟随 `--data-dir`；smoke 前需将 `thumbnail_cache_dir` 设置为隔离路径或确认默认 cache 不含/不触及真实用户资产。检查 cache 下其他缓存、secret 文件、sidecar 及模型可能访问/写入的路径。无法确认全部路径隔离时，不启动 GUI。迁移先作用于隔离副本；记录迁移前后 `user_version`、关键表/索引及行数检查结果。需要恢复时从只读快照在新路径重建隔离副本，不覆盖源库。
+
+### GUI smoke 事实与执行
+
+`scripts/smoke-desktop.mjs` 要求显式设置 `LAP_SMOKE_DATA_DIR`，不提供默认值；代码将 `--data-dir` 精确设为该路径、不自动追加后缀。debug app-data 根通常为 `%LOCALAPPDATA%\com.julyx10.lap.debug`，release 为 `%LOCALAPPDATA%\com.julyx10.lap`；不能把默认目录当作隔离目录。检查隔离根下生成/读取的 config、DB、缓存及用户数据路径都没有外指向真实资产。模型优先从 app-data 的 `models` 解析，缺失时回退到可执行文件/资源目录的 `models`；确认二者都不是需保护的用户可写数据位置。
+
+冒烟默认原图阈值为 `LAP_SMOKE_MIN_WIDTH=800`（不是 1500），并检查缩略图、滚动后缩略图、双击 viewer 原图解码和 console 错误。冒烟脚本会自行重建仓库 debug exe；保留默认 `LAP_SMOKE_EXE`，显式设置 `LAP_SMOKE_DATA_DIR` 为已验证的隔离根目录。脚本检测到已有 lappp 实例时会拒绝运行，不要关闭或杀掉用户实例。
+
+以下示例保存并还原环境变量原先的「未设置/已设置」状态，即使 smoke 命令失败也如此。若外层 PowerShell 被强制终止，`finally` 不保证执行；手动恢复到原状态。此环境变量只影响 smoke 子进程，不会自行设置应用内配置。
+
+在启动 smoke 前，先把 `src-tauri/tauri.windows.conf.json` 复制到仓库外一个确认不存在的备份路径，并记录 SHA-256；这份备份保留直到检查正常清理完成。脚本会拒绝原配置中已有 `remote-debugging-port` 的情形。备份能在不可捕获中断后恢复原始配置字节，包括 smoke 前用户未提交的编辑。
+
+```powershell
+# cwd: D:\MyCodes\AI-album\lap
+Set-Location $repoRoot
+$isolatedDataRoot = (Read-Host '输入已审查且含测试副本的隔离应用数据根绝对路径').Trim('"')
+if (-not [System.IO.Path]::IsPathFullyQualified($isolatedDataRoot) -or -not (Test-Path -LiteralPath $isolatedDataRoot -PathType Container)) { throw '隔离应用数据根路径无效或不存在' }
+$configPath = Join-Path $isolatedWorktree 'src-tauri/tauri.windows.conf.json'
+$configBackupPath = (Read-Host '输入仓库外新的 smoke 配置备份绝对路径（目标必须不存在）').Trim('"')
+if (-not [System.IO.Path]::IsPathFullyQualified($configBackupPath) -or (Test-Path -LiteralPath $configBackupPath)) { throw '配置备份目标必须是不存在的绝对路径' }
+$configBackupPath = [System.IO.Path]::GetFullPath($configBackupPath)
+if ($configBackupPath.Equals([System.IO.Path]::GetFullPath($configPath), [System.StringComparison]::OrdinalIgnoreCase)) { throw '配置备份不能覆盖 smoke 配置文件' }
+$repoPrefix = $repoRoot.TrimEnd('\') + '\'
+if ($configBackupPath.StartsWith($repoPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { throw '配置备份必须保存在仓库外' }
+if (-not (Test-Path -LiteralPath (Split-Path -Parent $configBackupPath) -PathType Container)) { throw '配置备份父目录不存在' }
+$configBeforeSmokeHash = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
+Copy-Item -LiteralPath $configPath -Destination $configBackupPath
+$configBackupHash = (Get-FileHash -LiteralPath $configBackupPath -Algorithm SHA256).Hash
+if ($configBackupHash -ne $configBeforeSmokeHash) { throw 'config backup hash differs from source; do not run smoke' }
+Write-Output "configBackupPath=$configBackupPath configBackupSha256=$configBackupHash"
+$hadSmokeDataDir = Test-Path Env:\LAP_SMOKE_DATA_DIR
+$previousSmokeDataDir = $env:LAP_SMOKE_DATA_DIR
+try {
+    $env:LAP_SMOKE_DATA_DIR = $isolatedDataRoot
+    Set-Location (Join-Path $isolatedWorktree 'src-vite')
+    Invoke-CheckedNative npm.cmd @('run', 'smoke:desktop')
+} finally {
+    if ($hadSmokeDataDir) { $env:LAP_SMOKE_DATA_DIR = $previousSmokeDataDir }
+    else { Remove-Item Env:\LAP_SMOKE_DATA_DIR -ErrorAction SilentlyContinue }
+    Set-Location $repoRoot
+}
+$configAfterSmokeHash = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
+if ($configAfterSmokeHash -ne $configBackupHash) { throw 'smoke config differs from saved original; stop and restore/inspect manually' }
+```
+
+冒烟脚本在正常完成及可处理的异常/信号清理中，通过 `restore-clean-build.mjs` 尝试恢复 `tauri.windows.conf.json` 原始字节、停止 smoke 子进程并重建不含调试端口的 exe。进程被强制结束、系统崩溃或断电等不可捕获中断不会执行这些处理，不能以 signal cleanup 推断这类场景已恢复。发生此类中断后，在再次构建、启动或部署前人工检查 `src-tauri/tauri.windows.conf.json`。仅在确认 `$configBackupPath` 是本次 smoke 前保存的仓库外备份、SHA-256 等于 `$configBackupHash`，且目标确为 `$configPath` 后，执行以下恢复；随后检查配置哈希，并从隔离候选的 `src-tauri` 做干净重建：
+
+```powershell
+# cwd: D:\MyCodes\AI-album\lap；仅在已确认备份、hash 和目标路径后执行
+Set-Location $repoRoot
+if ((Get-FileHash -LiteralPath $configBackupPath -Algorithm SHA256).Hash -ne $configBackupHash) { throw 'smoke config backup hash mismatch; do not restore from this file' }
+Copy-Item -LiteralPath $configBackupPath -Destination $configPath -Force
+$restoredConfigHash = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
+if ($restoredConfigHash -ne $configBackupHash) { throw 'restored smoke config hash mismatch' }
+Set-Location (Join-Path $isolatedWorktree 'src-tauri')
+Invoke-CheckedNative cargo @('build', '-p', 'lappp')
+```
+
+若备份缺失/校验不符或干净重建失败，停止后续操作并报告，不覆盖/部署产物。正常完成时保留备份到配置哈希一致、干净重建成功均已确证后；记录清理及退出码的实际证据，不得把未验证项写作已通过。
+
+## 6. 报告、关闭与推进（每个动作单独授权）
+
+同步记录须包含完整 SHA、提交/文件差异、逐提交裁决、所有门禁的精确 cwd / 命令 / 环境 / 退出码 / 日志位置、数据隔离与恢复细节、未覆盖范围及 NO-GO/GO 理由。不能填入未经执行的结果。完成所有门禁与审查后，先将记录在 `$recordPath`（仓库外）补齐并保存；记录完成本身不授权复制、提交或推进任何分支。严格按以下命令顺序执行：门禁通过后，取得单独授权，将最终记录复制到隔离候选并创建集成 merge commit；随后（如本地 `main` 尚未在冻结目标）取得另一项授权，将本地 `main` 快进到冻结 upstream SHA；最后取得第三项授权，将验证过的集成 commit 快进到 `develop`。每一动作只在对应的独立授权存在时执行；未授权的动作停止在相应边界，不得推定后续授权。
+
+### 将记录纳入隔离集成提交
+
+只有在门禁通过并取得**单独的隔离集成 merge commit 授权**后，才把最终记录复制进候选；不得覆盖同名文件。检查复制前后哈希一致，并核对候选工作树/分支、合并双方 SHA 及完整 staged diff。冲突解决结果需逐项复核并 stage；不要用 `git add -A`。暂存记录后必须确认没有剩余未暂存的 tracked 改动或意外 untracked 文件，否则停止并检查，不提交不明内容。记录文件与已验证的集成候选必须同属该 merge commit。
+
+```powershell
+# cwd: D:\MyCodes\AI-album\lap
+Set-Location $repoRoot
+Set-Location $isolatedWorktree
+$candidateRoot = [System.IO.Path]::GetFullPath(((Invoke-CheckedNative git @('rev-parse', '--show-toplevel')) -join '').Trim())
+$candidateBranch = ((Invoke-CheckedNative git @('branch', '--show-current')) -join '').Trim()
+$candidateHead = ((Invoke-CheckedNative git @('rev-parse', 'HEAD')) -join '').Trim()
+$mergeHead = ((Invoke-CheckedNative git @('rev-parse', 'MERGE_HEAD')) -join '').Trim()
+if ($candidateRoot -ne $isolatedWorktree -or $candidateBranch -ne $syncBranch) { throw 'candidate worktree/branch mismatch' }
+if ($candidateHead -ne $developSha -or $mergeHead -ne $upstreamTargetSha) { throw 'candidate merge parents do not match frozen SHAs' }
+$unmerged = @(Invoke-CheckedNative git @('diff', '--name-only', '--diff-filter=U'))
+if ($unmerged.Count -ne 0) { throw 'unresolved candidate conflicts remain' }
+$unstagedBeforeRecord = @(Invoke-CheckedNative git @('diff', '--name-only'))
+if ($unstagedBeforeRecord.Count -ne 0) { throw 'candidate has unstaged changes; inspect and stage only reviewed merge resolutions' }
+$untrackedBeforeRecord = @(Invoke-CheckedNative git @('ls-files', '--others', '--exclude-standard'))
+if ($untrackedBeforeRecord.Count -ne 0) { throw "candidate has unexpected untracked files: $($untrackedBeforeRecord -join ', ')" }
+$repoRecordPath = Join-Path $isolatedWorktree "docs/dev/$recordName"
+if (Test-Path -LiteralPath $repoRecordPath) { throw "candidate record path already exists: $repoRecordPath" }
+Copy-Item -LiteralPath $recordPath -Destination $repoRecordPath
+$externalRecordHash = (Get-FileHash -LiteralPath $recordPath -Algorithm SHA256).Hash
+$candidateRecordHash = (Get-FileHash -LiteralPath $repoRecordPath -Algorithm SHA256).Hash
+if ($candidateRecordHash -ne $externalRecordHash) { throw 'copied record hash mismatch' }
+Invoke-CheckedNative git @('add', '--', "docs/dev/$recordName")
+Invoke-CheckedNative git @('diff', '--cached', '--check')
+& git diff --quiet
+$unstagedExit = $LASTEXITCODE
+if ($unstagedExit -ne 0) { throw 'unstaged tracked changes remain; inspect/stage only reviewed conflict resolutions' }
+$untracked = @(Invoke-CheckedNative git @('ls-files', '--others', '--exclude-standard'))
+if ($untracked.Count -ne 0) { throw "unexpected untracked files remain: $($untracked -join ', ')" }
+Invoke-CheckedNative git @('status', '--short')
+Invoke-CheckedNative git @('diff', '--cached', '--stat')
+Invoke-CheckedNative git @('diff', '--cached', '--name-status', '--find-renames')
+Write-Output "candidateRoot=$candidateRoot candidateBranch=$candidateBranch candidateBaseSha=$candidateHead upstreamTargetSha=$mergeHead recordPath=$repoRecordPath recordSha256=$candidateRecordHash"
+
+# cwd: $isolatedWorktree；仅已获创建该隔离集成 merge commit 的单独授权后运行
+Invoke-CheckedNative git @('commit', '-m', 'Merge frozen upstream into develop')
+$integrationSha = ((Invoke-CheckedNative git @('rev-parse', 'HEAD')) -join '').Trim()
+$integrationParents = ((Invoke-CheckedNative git @('rev-list', '--parents', '-n', '1', $integrationSha)) -join '').Trim()
+if ($integrationParents -notmatch "^$integrationSha $developSha $upstreamTargetSha$") { throw 'integration commit parents do not match frozen candidate SHAs' }
+Write-Output "integrationSha=$integrationSha integrationParents=$integrationParents"
+```
+
+若没有这项 commit 授权，不复制记录；将最终记录留在仓库外 `$recordPath`，并在结论中原样报告该绝对路径。为关闭未提交候选且不留下脏工作树，在记录和门禁证据已保存、候选确为本 SOP 创建并且没有额外未跟踪资产后，从隔离工作树执行 `git merge --abort`，确认工作树干净，再从仓库根移除本流程创建的隔离工作树；不要清理用户已有路径或工作树。此路径只移除工作树目录，保留本流程新建的 `$syncBranch`（仍指向 `$developSha`），并在记录中注明：
+
+```powershell
+# cwd: $isolatedWorktree；仅限本 SOP 创建且仍为未提交合并状态的候选
+Set-Location $isolatedWorktree
+Invoke-CheckedNative git @('merge', '--abort')
+$remainingChanges = @(Invoke-CheckedNative git @('status', '--porcelain'))
+if ($remainingChanges.Count -ne 0) { throw 'candidate is not clean after merge abort; preserve it and stop' }
+
+# cwd: D:\MyCodes\AI-album\lap
+Set-Location $repoRoot
+Invoke-CheckedNative git @('worktree', 'remove', $isolatedWorktree)
+Write-Output "record remains outside repository: $recordPath"
+```
+
+### 门禁通过后的本地 `main` 快进
+
+本地 `main` 只快进到冻结的 `$upstreamTargetSha`，绝不指向集成 merge commit。门禁通过后，若 `main` 尚未到目标，必须先取得**单独明确的本地 main 快进授权**；随后必须验证 `main` 仍等于初始 `$mainSha`，否则停止并重新评估/授权。若已等于冻结目标则只做核验、不执行分支变更；若变为其他 SHA 则停止。此动作不包含 push。
+
+```powershell
+# cwd: D:\MyCodes\AI-album\lap；若 main 已在目标，只执行核验无需授权，跳过分支变更；否则先取得本地 main 快进单独授权再运行
+Set-Location $repoRoot
+$currentMainSha = ((Invoke-CheckedNative git @('rev-parse', 'main')) -join '').Trim()
+if ($currentMainSha -eq $upstreamTargetSha) {
+    Write-Output "main already at frozen target: $currentMainSha"
+} elseif ($currentMainSha -eq $mainSha) {
+    Invoke-CheckedNative git @('merge-base', '--is-ancestor', $mainSha, $upstreamTargetSha)
+    Invoke-CheckedNative git @('switch', 'main')
+    Invoke-CheckedNative git @('merge', '--ff-only', $upstreamTargetSha)
+    $mainResultSha = ((Invoke-CheckedNative git @('rev-parse', 'HEAD')) -join '').Trim()
+    if ($mainResultSha -ne $upstreamTargetSha) { throw 'main is not at frozen upstream target' }
+} else {
+    throw 'main changed from frozen old SHA to a different target; stop and resnapshot'
+}
+```
+
+### 将已验证集成提交快进到共享 `develop`
+
+只有存在上节生成并核验过的 `$integrationSha`，本地 `main` 已核实等于 `$upstreamTargetSha`，且另有**明确的本地 develop 快进授权**时，才推进 `develop`。从隔离工作树操作时先回到仓库根，再切换分支；复核集成 worktree SHA、目标分支旧 SHA 与 merge ancestry。若隔离工作树已按未授权分支处置步骤关闭，则不能执行本段，须保留新鲜的验证候选并从头确认门禁与授权。
+
+```powershell
+# cwd: $isolatedWorktree；仅持有有效 integrationSha 且尚未关闭候选时核验
+Set-Location $isolatedWorktree
+$candidateRoot = [System.IO.Path]::GetFullPath(((Invoke-CheckedNative git @('rev-parse', '--show-toplevel')) -join '').Trim())
+$candidateBranch = ((Invoke-CheckedNative git @('branch', '--show-current')) -join '').Trim()
+$candidateHead = ((Invoke-CheckedNative git @('rev-parse', 'HEAD')) -join '').Trim()
+if ($candidateRoot -ne $isolatedWorktree -or $candidateBranch -ne $syncBranch -or $candidateHead -ne $integrationSha) { throw 'verified integration worktree, branch, or SHA changed' }
+$recordInCommit = @(Invoke-CheckedNative git @('show', '--format=', '--name-only', $integrationSha, '--', "docs/dev/$recordName"))
+if ($recordInCommit.Count -ne 1 -or $recordInCommit[0] -ne "docs/dev/$recordName") { throw 'final sync record is not included in the integration commit' }
+
+# cwd: D:\MyCodes\AI-album\lap；仅 main 已核实到目标且另获 develop 快进授权时运行
+Set-Location $repoRoot
+$currentMainSha = ((Invoke-CheckedNative git @('rev-parse', 'main')) -join '').Trim()
+if ($currentMainSha -ne $upstreamTargetSha) { throw 'main is not at frozen upstream target' }
+$currentDevelopSha = ((Invoke-CheckedNative git @('rev-parse', 'develop')) -join '').Trim()
+if ($currentDevelopSha -ne $developSha) { throw 'develop changed from frozen base; stop and resnapshot' }
+Invoke-CheckedNative git @('merge-base', '--is-ancestor', $developSha, $integrationSha)
+Invoke-CheckedNative git @('merge-base', '--is-ancestor', $upstreamTargetSha, $integrationSha)
+Invoke-CheckedNative git @('switch', 'develop')
+Invoke-CheckedNative git @('merge', '--ff-only', $integrationSha)
+$developResultSha = ((Invoke-CheckedNative git @('rev-parse', 'HEAD')) -join '').Trim()
+if ($developResultSha -ne $integrationSha) { throw 'develop is not at verified integration SHA' }
+```
+
+授权仅覆盖明确的本地分支目标；push `origin/main` 或 `origin/develop` 均须另行授权，不包含在本 SOP 命令中。不得将任何授权推定为其他提交、分支推进或对外动作授权。
+
+### 部署 / 发布矩阵
+
+| 构建 | 输出 | 数据目录 | 用途与约束 |
 |---|---|---|---|
-| 1 | 跨文件契约对账 | **`npm run test:crossrefs`**（`scripts/check-cross-refs.mjs`：invoke 命令↔generate_handler、i18n 字面量/动态前缀↔en.json、shortcut id↔SHORTCUTS 三类闭包，任一悬空即红） | **已具备**（含在聚合门禁内；快捷键另有 test:shortcuts 双保险） |
-| 2 | 类型检查 | 全量 `npm run typecheck`（vue-tsc --noEmit）；**同步门禁用 `npm run typecheck:gate`** | **已具备（2026-11-19 全绿：基线 311→0 清零完成，现为硬门禁；`--update` 保留仅作事故后重建基线的应急口径）**；快捷键契约另有微型类型检查跑在 `test:shortcuts` |
-| 3 | 前端全量测试 | 各域 `npm run test:*`；**聚合 `npm run test`**（36 域顺序执行、汇总、任一红即失败）；孤儿守卫 `tests/orphanGuard.test.mjs` 保证任何测试文件必须挂在某个脚本上（且拒绝 `.test.ts`——node 20 跑不了 TS 测试，等于永不执行）；聚合 runner 自检 `tests/aggregateRunner.test.mjs`（`test:gate`）保证门禁本身能红 | **已具备**（本地聚合 + CI `frontend-gate` job） |
-| 4 | Rust 测试 | `cargo test --workspace` | 已具备 |
-| 5 | 前端构建 | `npm run build`（src-vite/） | 已具备 |
-| 6 | 三件套构建 | `scripts/build-windows.ps1`（默认 release；`-BuildProfile debug` 出 `build/windows/debug/`） | 已具备 |
-| 7 | 真机功能冒烟（真库） | **`npm run smoke:desktop`**（`scripts/smoke-desktop.mjs`：嵌入 CDP→断言缩略图>0、滚动下/上后仍>0、真实双击后 viewer 渲染原图、console 错误零容忍→还原 conf 并清洁重建；截图存 `build/smoke/`） | **已具备**（重门禁：重建+弹窗，仅同步/发布时跑，不进 `npm run test` 聚合） |
+| Debug 三件套 | `build\windows\debug\lappp.exe`、`lappp-client.exe`、`lappp-server.exe` | `%LOCALAPPDATA%\com.julyx10.lap.debug`（除非显式 `--data-dir`） | 调试、隔离验证、当前便携测试候选；不是 release 产品包 |
+| Release 三件套 | `build\windows\lappp.exe`、`lappp-client.exe`、`lappp-server.exe` | `%LOCALAPPDATA%\com.julyx10.lap`（除非显式 `--data-dir`） | 产品形态；部署时须明确用户看到的是另一数据目录 |
 
-### 3.1 跨文件契约对账（本 SOP 的灵魂）
+部署前须为目标目录内**所有将被替换的文件**制作可恢复备份并记录清单、文件名、时间与校验值，不只备份 exe。`D:\LapPortable` 的覆盖需要单独授权并明确目标；核实实际会替换的 exe、资源、模型、配置及其他文件，发布构建不得包含 `--remote-debugging-port`。验证与回滚路径未确认前不得覆盖。发布/对外分发另需独立授权，并检查 GPL 与 InsightFace 模型许可约束。不得用真实图库作为强制验收条件。
 
-对账清单（上游动了哪类，就查哪类；逐项执行并留输出）：
+## 7. 事故索引（摘要）
 
-| 契约类型 | 注册处 | 引用处 | 对账方法 |
-|---|---|---|---|
-| 快捷键动作 id | `common/shortcuts.ts`（SHORTCUTS + ShortcutActionId） | `shortcut('…')` / `getShortcutLabel` / `matchesActionShortcut` 全仓字面量 | 已脚本化：`scripts/check-cross-refs.mjs` 第三类闭包（字面量 ↔ SHORTCUTS），另有 `tests/shortcutsLayout.test.mjs` 钉 fileMenu 引用、`tests/shortcutActionIdType.test.mjs` 钉类型契约 |
-| i18n key | `locales/*.json` | `t('…')` / `localeMsg…menu…` 字面量 | 已脚本化：`scripts/check-cross-refs.mjs` 第二类闭包（字面量 ↔ en.json，动态拼接按前缀校验）（v0.4.0 曾出 17 语言包漏改，af894bbf） |
-| Tauri 命令白名单 | lappp-server `SKIP`/bridge 注册表（桌面 257 + 客户端 5 = 262 注册，桥接 234） | 前端 `invoke('…')` 字面量 | 已脚本化：`scripts/check-cross-refs.mjs` 第一类闭包（前端 invoke ↔ `generate_handler!` 两个 feature 变体取并集）；Rust 侧另有 `bridge_whitelist_covers_the_registration_exactly` 测试 |
-| 事件名 / 协议名 | `t_events` / SSE / `lapd.lock` 等约定常量 | 字面量引用 | 上游动过就 grep |
-| 数据目录/标识符 | `t_config.rs get_app_data_folder_name` | 部署脚本、文档里的硬编码路径 | 同步后 grep 一遍（改名事故：Lap→lappp 后脚本里残留旧名） |
-
-### 3.2 真机功能冒烟（最小断言集，缺一不可）
-
-1. 以**用户实际数据目录**对应的 profile 启动真机（portable 用 debug；见 §4 矩阵）。
-2. CDP 断言（参考 `docs/dev/ui-smoke.mjs` 的连接方式与 2026-11-18 排查中的探针）：
-   - [ ] 打开库后 `[data-thumbnail-container]` 数量 > 0；
-   - [ ] 向下、向上各滚动一次后数量仍 > 0（本次事故的坏格特征：cell 内只有 `<!---->`）；
-   - [ ] 真实双击（`Input.dispatchMouseEvent` clickCount=2）后 viewer 出现且存在
-         `img.naturalWidth > 1500` 的原图；
-   - [ ] 侧栏「主题」计数 = 该主题自身的命中数（≠ 库总数），且与宫格总数一致
-         （计数必须取自主题自己的 CLIP 查询，见 §6 的 2026-11-19 事故）；
-   - [ ] 截图存档到 `docs/dev/` 或任务记录。
-3. **console 错误全量归类**：`Runtime.consoleAPICalled(error)` + `exceptionThrown`
-   逐条给结论（已知无害要给出依据），不许按关键词丢弃。
-4. 注意 `ui-smoke.mjs` 的警告：`--remote-debugging-port` 会杀运行时创建的子 webview
-   窗口——只测主窗口流程；子窗口用 UIA。**冒烟用的构建不得带该参数发布**
-   （tauri.windows.conf.json 的 `additionalBrowserArgs` 用完必须回退）。
-
-> 已落地：`scripts/smoke-desktop.mjs` 固化了上述断言（CDP 参数临时注入 / `finally` 逐字节回退 + 清洁重建）。
-> 尚未脚本化的两条：**侧栏「主题」计数断言**（需多语言 CLIP 塔在场，见下）与截图归档到 `docs/dev/`。
-> 跑冒烟前确认 `<exe>/models/multilingual/{text_model.onnx,tokenizer.json}` 存在，否则主题查询直接报错（`Image search model files are missing`），断言会误判为功能缺陷。
-
-## 4. 部署（D:\LapPortable，便携测试形态）
-
-| profile | 二进制 | 数据目录 | 说明 |
-|---|---|---|---|
-| debug | `build/windows/debug/*` | `com.julyx10.lap.debug` | 现行便携形态（用户 2,773 项库在此） |
-| release | `build/windows/*` | `com.julyx10.lap` | 产品形态；直接换 exe 用户会看到另一个库 |
-
-- 覆盖前**必须**时间戳备份：`cp lappp.exe lappp.exe.bak-$(date +%Y%m%d-%H%M%S)`
-  （备份仅用于回滚，验证通过后可删；不需要它复现 bug——源码在 git 里）。
-- 部署后校验：内嵌 bundle hash 与本次构建一致、`grep -a -c remote-debugging-port` = 0。
-- `lappp-server.exe` 不内嵌前端（运行时读 `--web-dir`/`resources/web`），
-  前端变更时无需更新它。
-
-## 5. 回滚
-
-- 代码：`git revert -m 1 <merge-commit>`（merge 提交）或 revert 具体修复提交。
-- 部署：`.bak-<ts>` 改回原名。
-- 数据：同步本身不改库数据；仅当上游含 SQLite 迁移时，回滚前先备份
-  `%LOCALAPPDATA%\com.julyx10.lap[.debug]\libraries\`。
-
-## 6. 事故案例索引（每条教训对应本 SOP 的一条规则）
-
-| 事故 | 教训 → 规则 |
+| 日期 / 事件 | 规则与详细证据 |
 |---|---|
-| 2026-11-18 宫格空缺/查看器白屏（悬空 shortcut id） | §0.3 对账、§0.4 错误归类、§3.1 快捷键对账、§3.2 冒烟断言 |
-| 2026-11-18 E2E「大图渲染未确证」仍放行 | §0.1 未确证项不得合入 |
-| SW 毒化（9b48f8e7） | §3.2 真机冒烟的由来：构建≠能跑 |
-| 改名残留（Lap→lappp：脚本/文档/关于页/updater） | §3.1 最后一行：改名类同步全仓 grep |
-| 排查期反复重启二进制无效 | 前端问题先解剖 vnode/组件树（读 `subTree`、包 `setup` 捕 render 异常），探针只读不改语义 |
-| 2026-11-19 主题（subject）计数全等于库总数（2,773） | **计数必须取自被计对象自己的查询**：主题是 CLIP 查询，计数走 `getSubjectCountAndSum(smartId)`（自带 prompt+threshold），不得复用「当前环境查询」——侧栏计数那条路径会把「无约束的库查询」当成文本腿并集，于是每个主题都等于库总数。配套：聚合量是运行时量（`toPersistedLibraryState` / `toRuntimeLibraryState`），不落盘、加载即清，否则错值会跨会话存活 |
-| 2026-11-19 聚合门禁「36/36 全绿」而一个测试都没跑 | **门禁必须能红才算门禁**：runner 用 `spawnSync(npm_execpath, …, {shell:true})` 拉起各域，Windows 上 cmd.exe 不执行 `npm-cli.js`，每个域秒退 0。修法：直接 `spawn(process.execPath, args)` 跑 `node …`；并用 `tests/aggregateRunner.test.mjs`（`test:gate`）钉住「失败域必须让 runner 退出 1」「域脚本必须真的执行」。**新门禁先证明它能红** |
-| 2026-11-19 上游合并带来新类型错（`statusBarFields: null`） | 类型基线为 0 时，**任何上游新增的类型错都是红的**——这是基线制门禁的价值所在；修法同既有套路：JS store 的 `null` 默认值要用 JSDoc 标注类型，否则收窄成 `null` |
-| 2026-11-19 前端深度审查：Web 鉴权把长期令牌交给页面脚本；SSE 未设协议层 `id:` 致重连重放；会话失效不跳登录页；上游状态栏改版丢失缩放百分比；两处直连 `@tauri-apps/api/event` 绕过传输缝 | **跨形态契约要在两端都对**：①令牌只经 HttpOnly Cookie 下发浏览器（服务端按 `Sec-Fetch-*`/`Origin` 识别浏览器，非浏览器才回 body，`credential_response` 依此分支）；②SSE 帧必须写协议层 `id:`（浏览器据此回传 `Last-Event-ID`，否则重放整段缓冲）；③`auth.markExpired` 之后要有订阅者把 Web 端路由到 `/login`（router 守卫只在导航时读会话）；④上游改版删掉的 UI 能力（缩放百分比）要在合并后回归；⑤事件 API 只能从 `common/transport` 进（`tests/transport.test.mjs` 已加「只有传输缝可 import `@tauri-apps/api/event`」的守卫） |
-
-## 7. 待建资产清单（按优先级）
-
-1. ~~`ShortcutActionId` 改为从 `SHORTCUTS` 派生~~ **已落地（2026-11-18）**：
-   `type ShortcutActionId = (typeof SHORTCUTS)[number]['id']`，SHORTCUTS 去掉
-   宽化注解、VIEW_BACKGROUND 的 `satisfies` 移除（否则 TS2456 循环）。
-   契约由 `tests/shortcutActionIdType.test.mjs` 钉死（shortcuts.ts 0 诊断、
-   探针 @ts-expect-error 拒收未注册 id、类型↔注册表双向相等、防塌缩成
-   string），已接入 `npm run test:shortcuts`。
-2. ~~`vue-tsc --noEmit`：加 devDep + `npm run typecheck`，进 §3 门禁与 CI~~
-   **已落地（2026-11-18，基线制）**：`vue-tsc 3.3.14` devDep + `npm run typecheck`（全量）+
-   `npm run typecheck:gate`（`scripts/typecheck-gate.mjs`，key=file::code::message，
-   只许减少不许新增；注入新错实测红、还原实测绿）。存量盘点：**311 错 / 42 文件**——
-   TS2339×94（JS Pinia store 对 TS 不可见）、TS2322×54、TS2367×41（**疑似真 bug**，
-   如 Calendar.vue 字面量 '1'==='5' 比较）、TS2345×38、TS7006×37、TS2503×8
-   （NodeJS 命名空间误入前端，应 `ReturnType<typeof setTimeout>`）、零星其余；
-   重灾文件 Content.vue×147、Settings.vue×31、Image.vue×17。
-   清零策略：先修 TS2367/TS2503 疑似真 bug → configStore.js 等补类型（一次消 ~94）→
-   按文件烧余量；每批结束 `--update` 收缩基线。CI 接入归 §7-③。
-   **第 1 批已落地（2026-11-18）：311 → 250**——TS2367×41 全部是
-   `sidebarIndex === SIDEBAR.X`（configStore.js 的 JS 不拓宽字面量污染，非真 bug；
-   修复 = state 字段 JSDoc 标注 `Sidebar` 联合）；TS2503×8 = `NodeJS.Timeout` →
-   `ReturnType<typeof setTimeout>`；附带 12 个连锁消失 + 1 个真赋值错误
-   （Home.vue clickSidebar 参数补 `Sidebar` 类型）。教训：门禁 key 的消息必须
-   **归一化砍掉内嵌类型串**（`on/to type 'Store<…>'`），否则无关类型改动会
-   把健康修复误报成新错。
-   **第 2 批已落地（2026-11-18）：250 → 222**——TS2339 的 store 不可见大类，
-   根因不是"JS store 缺类型"，而是 `configStore.js` 的 `persist:` 选项在
-   **插件类型增强未加载**时让 pinia defineStore 重载解析崩塌（对照实验：
-   mini store + persist → 推断死；+ `import 'pinia-plugin-persistedstate'`
-   → 恢复）。修复 = store 顶部一行 side-effect import（零行为变更）。
-   剩余 TS2339×70 已换根因：36 个 `on type 'never'` 级联 + ImportMeta/env
-   等零星，留后续批次。
-   **第 3 批已落地（2026-11-18）：222 → 189**——never 级联三源：
-   ① `uiStore.countUpdateRequest: null`（null 推断 → 守卫排空 → never，
-   一次放大 27 错）：补 **判别联合** typedef（按 `source` 收窄，消费端
-   switch 自动获得精确载荷）；② Settings.vue `ref(null)` 同型（8 错）：
-   ref 泛型标注；③ `configStore.externalApps` 默认 `apps: []`（JS 里
-   `never[]`，毒化按 kind 索引）：JSDoc cast。教训：**JS store/JS 模块的
-   `null`/`[]` 默认值是 never 级联的头号源头**，新写 state 一律带 JSDoc
-   类型或判别联合。
-3. ~~26 个孤儿测试接入 `test:*` + `npm run test` 聚合脚本；CI 加测试步骤~~
-   **已落地（2026-11-18）**：20 个绿孤儿接入 16 个新域脚本；聚合 `npm run test`
-   = `scripts/run-frontend-tests.mjs`（跑全部 `test:*`、排除隔离区、汇总，
-   **31/31 绿**）；`tests/orphanGuard.test.mjs` 守卫"任何测试文件必须挂在
-   某脚本或隔离区"（放入未登记文件实测红）；CI（pr-build.yml）新增独立
-   `frontend-gate` job = `typecheck:gate` + `npm run test`
-   （**独立并行不加 needs**——`needs` 会让 workflow_dispatch 按平台跳过时
-   连锁跳过构建 job）。
-   **隔离区已清空并删除（同日续）**：6 文件 67 测试全部修复转入正域
-   （现 **36 域 / `npm run test` 36/36 绿**）。修复定性（无一为 fork 产品
-   bug，但实锤两类上游债）：
-   ① **CRLF 坑**：上游 offlineCatalog 的 import 剥离正则只锚 `\n`，
-   Windows 检出带 `\r` → import 残留 → 整文件加载失败（上游 CI 全 LF
-   从不暴露；即便取上游新测试也要补 `\r?`）；
-   ② **上游自破测试**：上游 a2cf51ec 更新过 offlineCatalog，但取其测试
-   在 upstream 干净树对照跑仍 **24/6 红**——上游不跑前端测试；folderDeletion/
-   afAreaShortcut 等断言停留在已删除的旧流程（`comment`/`rotate` 菜单项、
-   A→Alt+A 绑定、warmup 云检、失败对话框不再有 retry），逐项按现行契约重写
-   并注明依据提交号；
-   ③ 其余为锚点漂移（`export` 剥离单发 replace 漏第二处、fixture 缺 fork
-   新增的 transportMode/signMediaUrl 桩）。
-   另修 appearance/locale 两域漏 `--experimental-vm-modules` 旗标。
-   **第 4 批已落地（2026-11-19）：189 → 149**——TS7006×33 + TS7031×7（隐式
-   any 回调/解构）全部注型清零，15 文件 40 处。注型原则：**接缝可知则真
-   类型**（Folder、boolean、PromiseSettledResult、videojs 返回值、监听
-   payload 结构），**JS 接缝不可知则显式 any**（沿用文件内既有 idiom，
-   不为过关编造类型）。连带发现并修复：thumbnail-scheduler 测试把**未
-   转译的 TS 源**直接 `new Function`（任何注解进入该区间都会炸），改为
-   transpile 后注入，顺带免疫未来注解。
-   **第 5 批已落地（2026-11-19）：149 → 108**——TS2339×41 全清，其中挖出
-   **1 个真运行时 bug**：Home 左栏/分隔条 `v-if="!uiStore.isFullScreen"`
-   读错 store（标志在 `config.mediaViewer.isFullScreen`）→ 全屏时左栏
-   从不隐藏；修复后冒烟全绿。其余根因：libraryStore 的 JSDoc 类型漏
-   `activateTick` 字段（值在类型不在，×10）、viewerSessionStore
-   `pendingRefresh` 裸 null（判别联合 JSDoc）、日历区间元组/对象联合
-   （归一化）、`planNavigationQuery` 28 变体联合缺 params 收窄（调用点
-   cast）、Image.vue `new Promise<…>` 泛型没用现成 `LoadedImage`（×8
-   一词修复）、tauriEmit `void|Promise` 双态 `.catch`（Promise.resolve
-   包裹）、catch 参数 `.message`（Error cast）。**踩坑**：为修
-   `import.meta.env` 引入 `/// vite/client` 导致全局类型污染（一次
-   +162 错），改用 3 行手写 `global-env.d.ts` 只声明用到的 `env.DEV`
-   ——**引第三方类型前先 A/B**。
-   **第 6 批已落地（2026-11-19）：108 → 59**——TS2322/TS2345 大头。最大根因
-   是 **api.js 的默认 null 参数**（`= null` 形参推断为 null 字面量，调用面
-   全炸）：给 13 个 API 函数补 JSDoc 参数/返回类型（dedupDelete 的解构
-   参数用 `@param {{…}}` 整体标注），一次消掉调用面 ~20 处；vlApi 的
-   list/get 函数补 `@returns {Promise<any[]>}`（any[]|undefined 家族全消）。
-   第二根因：**libraryStore `_libraryId: null` 字面量**——JSDoc 拓宽为
-   `string | null` 后，7 个消费方类型（delete plan、batchRename、
-   Refresh/BatchRename 对话框 props、albumRecovery 的 Map 键与参数）
-   需要跟进拓宽，属诚实建模（切库瞬间就是 null）。踩坑：JSDoc `@param`
-   **不能标注匿名解构参数**（dedupeGroups 实测参数类型反而劣化），
-   解构参数要么命名、要么调用点 cast。
-   **第 7 批收官已落地（2026-11-19）：59 → 0，基线清零**——vue-tsc 全绿，
-   typecheck:gate 升级为硬门禁。收官批再挖出 **2 个上游真 bug + 1 个
-   健壮性洞**：① `cancelIndexing()` 引用了从未定义的
-   `normalizedAlbumQueue`（上游同样只有这一处引用——点"取消索引"必抛
-   ReferenceError，改读 `libConfig.index.albumQueue`）；② FileInfo 的
-   `toast(...)` 把 toast 对象当函数调（复制 VL 描述必抛 "not a
-   function"，改 `toast.success`）；③ `listVlModels` 失败路径返回
-   undefined 而调用方无守卫读 `.models`（catch 改返回空 shape）。
-   其余修法：openFolderDialog 源头收窄 `multiple:false` 的返回
-   （string|string[]→string|null，4 处调用面消）；v-model 索引 typed
-   settings 的用可写 computed 代理（模板无法既 v-model 又 cast）；
-   getImageStyle 显式 `CSSProperties` 返回（推断的字面量宽化被 Vue
-   StyleValue 拒收）；video.js 的 core/CSS 入口 3 行 d.ts 垫片
-   （不引 @types/video.js）；MediaViewer/Content 模板 null→undefined
-   prop 差值用 `?? undefined`。
-   **类型债战役总结：311 → 0（七批），挖出真 bug 5 个**
-   （Home 全屏读错 store、cancelIndexing、toast 不可调用、listVlModels
-   undefined、+ i18n CRLF 加载炸），全部修在门禁体系内。
-   教训沉淀：**从上游同步测试 ≠ 拿来就能绿**——上游自己的前端测试不在
-   CI 里，取回后必须在本地全量跑一遍再合入。
-4. ~~`scripts/check-cross-refs.mjs`：§3.1 全仓对账脚本化~~ **已落地
-   （2026-11-19）**：`npm run test:crossrefs` 进聚合（36 域）。三类闭包
-   全绿：262 注册命令 ↔ 241 invoke 引用、1676 en.json 键 ↔ 全部字面量与
-   动态前缀、62 shortcut id ↔ 47 引用（现存零悬空——本次是建防线，非还债）。
-   实现要点：invoke 匹配须容忍泛型 `invoke<T>('cmd')`；i18n 的
-   `t('prefix.'+x)` / ``t(`prefix_${x}`)`` 按**前缀命中任一真实键**判定，
-   不是节点判定（首版把 `settings.raw.source_*`/`album.edit.tab_*` 误报，
-   实际键全在）；shortcut 字面量字符类要点号在后（`[a-zA-Z][\w.]*`）。
-   咬合验证：注入假命令/假键/假动作 id 三类均红并点名 file:line。
-5. ~~`scripts/smoke-desktop.ps1`：§3.2 断言固化~~ **已落地（2026-11-19，
-   实现为 `scripts/smoke-desktop.mjs` + `npm run smoke:desktop`）**。要点：
-   - **CDP 注入只能走 conf**：wry 恒传自有 browser args，此时 WebView2
-   忽略 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 环境变量（实测 60s 无端口；
-   上游 ui-smoke.mjs 头注的方法已失效）。脚本自动：临时把
-   `additionalBrowserArgs` 写进 `tauri.windows.conf.json` → 增量重建 →
-   冒烟 → **try/finally 还原原始字节并再次重建清洁二进制**（SOP"冒烟
-   构建不得带调试端口发布"由构造保证，崩溃也不泄漏；用户未提交的
-   conf 改动按字节原样保留）。
-   - 断言集：缩略图>0（90s 等待）；滚动 4000→0 后仍>0；真实双击
-   （Input clickCount=2）后 `#responsiveDiv` 出现且最大 `img.naturalWidth`
-   > `LAP_SMOKE_MIN_WIDTH`（默认 800，缩略图约 768，越过即证明原图解码）；
-   console 错误**零白名单全量失败**。
-   - 防护：已有 lappp 进程在跑则拒绝启动（不杀用户实例）；数据目录/
-   二进制不存在即退 2；debug/release 数据目录矩阵见 §4。
-   - 验证：真机全绿（32 缩略图、滚动 52/32、viewer 2256px、console 干净）；
-   咬合=阈值拉满实测红且失败路径完成还原+清洁重建；退出码实测 1；
-   泄漏校验=conf 零 diff、重建后二进制 grep 调试端口=0。
-6. `docs/dev/launch-portable-check.ps1` 里硬编码的 `Lap.exe` 更新为 `lappp.exe`。
+| 2026-11-18：上游删除快捷键动作后 fork 留下悬空引用；渲染异常导致宫格空缺、查看器白屏 | 冻结区间逐提交审查、fork 路径交集与跨引用检查；详见 [排查记录](排查-2026-11-18-宫格空缺与原图白屏.md) |
+| 2026-11-18：v0.4.0 迁移编号与 fork schema 重叠 | 隔离副本演练、核对版本及 schema，不在真实库试迁移；评估与历史证据见 [v0.4.0 同步评估](SYNC-v0.4.0-同步评估-2026-11-18.md) |
+| 2026-11-19：前端聚合 runner 曾假绿；类型门禁发现合并引入类型错 | 门禁须确实执行并保留失败证据；详见 [7 提交同步记录](SYNC-2026-11-19-上游7提交合并.md) 及 [历史记录](SOP-上游同步升级-历史记录.md) |
+| 2026-11-19：smoke 可能触及默认用户数据目录；调试端口恢复需验证 | smoke 需明确隔离 app-data 与所有配置外部路径，记录恢复及干净重建结果；详见脚本 `scripts/smoke-desktop.mjs` 和 `scripts/restore-clean-build.mjs` |
