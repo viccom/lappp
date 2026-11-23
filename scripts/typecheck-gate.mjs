@@ -1,4 +1,4 @@
-// Frontend typecheck baseline gate (SOP-上游同步升级.md §3 gate 2).
+// Frontend typecheck baseline gate (SOP-上游同步升级.md §4).
 //
 // The repo carries a quantified backlog of pre-existing type errors
 // (311 across 42 files at adoption time, 2026-11-18). Burning it down takes
@@ -17,6 +17,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { evaluateTypecheckResult } from "./typecheck-gate-logic.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const viteRoot = join(here, "..", "src-vite");
@@ -32,10 +33,6 @@ function runVueTsc() {
     maxBuffer: 64 * 1024 * 1024,
   });
   const output = `${res.stdout || ""}\n${res.stderr || ""}`;
-  if (res.error) {
-    console.error("[typecheck-gate] failed to run vue-tsc:", res.error.message);
-    process.exit(2);
-  }
   const counts = new Map();
   for (const line of output.split(/\r?\n/)) {
     const m = DIAG.exec(line);
@@ -49,7 +46,7 @@ function runVueTsc() {
     const key = `${m[1]} :: ${m[4]} :: ${message.slice(0, 200)}`;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
-  return { status: res.status, counts };
+  return { status: res.status, signal: res.signal, error: res.error, counts };
 }
 
 function loadBaseline() {
@@ -61,24 +58,27 @@ function loadBaseline() {
 }
 
 const update = process.argv.includes("--update");
-const { counts } = runVueTsc();
-const total = [...counts.values()].reduce((a, b) => a + b, 0);
+const result = runVueTsc();
+const { counts } = result;
+const validation = evaluateTypecheckResult(result, { update });
+
+if (!validation.ok && validation.reason) {
+  console.error(`[typecheck-gate] FAIL — ${validation.reason}`);
+  process.exit(2);
+}
 
 if (update) {
-  const entries = Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));
-  writeFileSync(baselinePath, JSON.stringify({ generatedAt: new Date().toISOString(), total, entries }, null, 2) + "\n");
-  console.log(`[typecheck-gate] baseline updated: ${total} errors, ${counts.size} keys`);
+  writeFileSync(baselinePath, JSON.stringify({
+    generatedAt: new Date().toISOString(),
+    ...validation.baselineUpdate,
+  }, null, 2) + "\n");
+  console.log(`[typecheck-gate] baseline updated: ${validation.total} errors, ${counts.size} keys`);
   process.exit(0);
 }
 
 const baseline = loadBaseline();
-const baseEntries = baseline.entries || {};
-const added = [];
-for (const [key, count] of counts) {
-  const allowed = baseEntries[key] || 0;
-  if (count > allowed) added.push(`${key} (+${count - allowed})`);
-}
-const removed = Object.keys(baseEntries).filter((k) => !counts.has(k));
+const comparison = evaluateTypecheckResult(result, { baselineEntries: baseline.entries || {} });
+const { added, removed, total } = comparison;
 
 if (added.length > 0) {
   console.error(`[typecheck-gate] FAIL — ${added.length} NEW type error(s) vs baseline (total now ${total}):`);

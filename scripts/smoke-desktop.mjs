@@ -1,4 +1,4 @@
-// Desktop smoke gate (SOP-上游同步升级.md §3.2 / §7-5).
+// Desktop smoke gate (SOP-上游同步升级.md §5).
 //
 // Boots the real desktop binary against a real data directory and asserts,
 // over WebView2's CDP, the minimal rendering contract that "builds" cannot
@@ -10,7 +10,7 @@
 //
 // Environment:
 //   LAP_SMOKE_EXE       default src-tauri/target/debug/lappp.exe
-//   LAP_SMOKE_DATA_DIR  default %LOCALAPPDATA%/com.julyx10.lap.debug
+//   LAP_SMOKE_DATA_DIR  required explicit isolated data directory
 //                       (must match the binary's build flavor: debug builds
 //                       read …lap.debug, release builds read …lap - SOP §4)
 //                       The gate needs the app to be closed: a second lappp
@@ -28,28 +28,27 @@
 // `additionalBrowserArgs` into src-tauri/tauri.windows.conf.json, rebuilds
 // the launcher (incremental, seconds), runs the assertions, then RESTORES the
 // exact original config bytes and rebuilds - the SOP rule "smoke builds must
-// never ship the debug port" is enforced by construction, including on crash
-// (try/finally). The config is restored byte-identical, so uncommitted user
-// edits survive.
+// never ship the debug port" is enforced by construction on normal completion
+// and catchable shutdown. Forced termination or power loss may require manual
+// config restoration and a clean rebuild. The config is restored byte-identical,
+// so uncommitted user edits survive.
 //
 // Console errors are collected whole and fail the run unless explicitly
 // allowlisted below with a reason; the v0.4.0 root cause sat in exactly the
 // noise someone would have filtered.
 //
 // Not part of `npm run test` (rebuilds + spawns a GUI window); run it as the
-// sync / release gate per SOP §3 gate 7.
+// isolated sync validation per SOP §5; release requires separate authorization.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import os from 'node:os';
+import { resolveRequiredDataDir } from './smoke-config.mjs';
+import { createCleanup, createShutdownHandler } from './restore-clean-build.mjs';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 const EXE = process.env.LAP_SMOKE_EXE || join(repo, 'src-tauri', 'target', 'debug', 'lappp.exe');
-const DEFAULT_DATA_DIR =
-  join(process.env.LOCALAPPDATA || join(os.homedir(), 'AppData', 'Local'), 'com.julyx10.lap.debug');
-const DATA_DIR = process.env.LAP_SMOKE_DATA_DIR || DEFAULT_DATA_DIR;
 const MIN_WIDTH = Number(process.env.LAP_SMOKE_MIN_WIDTH || 800);
 const OUT_DIR = join(repo, 'build', 'smoke');
 const CONF = join(repo, 'src-tauri', 'tauri.windows.conf.json');
@@ -105,28 +104,53 @@ function cargoBuild() {
 }
 
 // Temporarily embed the CDP port, and always restore the exact original bytes.
-function withCdpConf(port, body) {
-  const original = readFileSync(CONF, 'utf8');
-  if (original.includes('remote-debugging-port')) {
-    throw new Error('tauri.windows.conf.json already carries a remote-debugging-port - clean it up first (SOP §3.2)');
+async function withCdpConf(port, stopChild) {
+  const original = readFileSync(CONF);
+  const originalText = original.toString('utf8');
+  if (originalText.includes('remote-debugging-port')) {
+    throw new Error('tauri.windows.conf.json already carries a remote-debugging-port - clean it up first (SOP §5)');
   }
-  const conf = JSON.parse(original);
+  const conf = JSON.parse(originalText);
   conf.app = conf.app || {};
   conf.app.windows = conf.app.windows || [];
   conf.app.windows[0] = conf.app.windows[0] || {};
   conf.app.windows[0].additionalBrowserArgs = `--remote-debugging-port=${port}`;
-  writeFileSync(CONF, JSON.stringify(conf, null, 2) + '\n');
-  return async (result) => {
-    writeFileSync(CONF, original);
-    log('config restored, rebuilding a clean binary...');
-    try { cargoBuild(); log('clean rebuild done'); } catch (e) { console.error('[smoke] CLEAN REBUILD FAILED:', e.message); }
-    return result;
-  };
+  const cleanup = createCleanup({
+    stopChild,
+    restore: () => writeFileSync(CONF, original),
+    rebuild: () => {
+      log('config restored, rebuilding a clean binary...');
+      cargoBuild();
+      log('clean rebuild done');
+    },
+  });
+  try {
+    writeFileSync(CONF, JSON.stringify(conf, null, 2) + '\n');
+  } catch (error) {
+    try { await cleanup(); } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'smoke config patch and cleanup failed');
+    }
+    throw error;
+  }
+  return cleanup;
+}
+
+function stopChild(child) {
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  const result = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { encoding: 'utf8' });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`taskkill failed (status ${result.status}): ${result.stderr || ''}`);
 }
 
 async function main() {
+  let DATA_DIR;
+  try {
+    DATA_DIR = resolveRequiredDataDir(process.env.LAP_SMOKE_DATA_DIR);
+  } catch (error) {
+    return fail(error.message);
+  }
   if (!existsSync(EXE)) return fail(`binary not found: ${EXE}`);
-  if (!existsSync(DATA_DIR)) return fail(`data dir not found: ${DATA_DIR} (set LAP_SMOKE_DATA_DIR; debug builds read …lap.debug, release …lap)`);
+  if (!existsSync(DATA_DIR)) return fail(`data dir not found: ${DATA_DIR} (debug builds read …lap.debug, release …lap)`);
 
   // Refuse to touch a running instance - killing the user's app is not ours
   // to do, and a second instance cannot come up anyway: the WebView2 user
@@ -140,10 +164,28 @@ async function main() {
 
   const port = Number(process.env.LAP_SMOKE_PORT) || await freePort();
   mkdirSync(OUT_DIR, { recursive: true });
-  const restore = withCdpConf(port);
   let child = null;
-  const cleanup = () => { if (child && child.pid) { try { spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F']); } catch {} } };
-  process.on('exit', cleanup);
+  const cleanup = await withCdpConf(port, () => stopChild(child));
+  const shutdown = createShutdownHandler({
+    cleanup,
+    exit: (code) => process.exit(code),
+    report: (...args) => console.error(...args),
+    getExitCode: () => process.exitCode,
+  });
+  const onInterrupt = () => { void shutdown('SIGINT', 130); };
+  const onTerminate = () => { void shutdown('SIGTERM', 143); };
+  const onUncaughtException = (error) => {
+    console.error('[smoke] UNCAUGHT EXCEPTION:', error);
+    void shutdown('uncaughtException', 1);
+  };
+  const onUnhandledRejection = (error) => {
+    console.error('[smoke] UNHANDLED REJECTION:', error);
+    void shutdown('unhandledRejection', 1);
+  };
+  process.on('SIGINT', onInterrupt);
+  process.on('SIGTERM', onTerminate);
+  process.on('uncaughtException', onUncaughtException);
+  process.on('unhandledRejection', onUnhandledRejection);
 
   try {
     log('rebuilding with the CDP port embedded...');
@@ -226,11 +268,15 @@ async function main() {
     return fail(`${errors.length} unclassified console error(s)`);
   }
 
-  console.log('[smoke] OK — grid renders, survives scrolling, viewer decodes the original, console clean');
   } finally {
-    cleanup();
-    await restore();
+    await cleanup();
+    process.off('SIGINT', onInterrupt);
+    process.off('SIGTERM', onTerminate);
+    process.off('uncaughtException', onUncaughtException);
+    process.off('unhandledRejection', onUnhandledRejection);
   }
+  if (process.exitCode !== 0) return;
+  console.log('[smoke] OK — grid renders, survives scrolling, viewer decodes the original, console clean');
 }
 
 async function shot(send, name) {
@@ -241,4 +287,4 @@ async function shot(send, name) {
   } catch { /* screenshots are best-effort evidence */ }
 }
 
-main().catch((e) => { console.error('[smoke] FAILED:', e.message); process.exit(1); });
+main().catch((e) => { console.error('[smoke] FAILED:', e.message); process.exitCode = 1; });
