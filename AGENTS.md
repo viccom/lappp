@@ -86,6 +86,7 @@ pwsh -File scripts/build-windows.ps1 -BuildProfile release   # 默认 release
 | 前端状态 | `src-vite/src/stores/`：`configStore`（全局设置→localStorage）、`libraryStore`（每库状态→后端 `saveLibraryState`）、`uiStore`/`viewerSessionStore`（纯运行时，不落盘） |
 | 传输缝（桌面 ⇄ Web 切换点） | `src-vite/src/common/transport/`（`mode.js` 决定 tauri/http；`capabilities.js` 决定原生能力可见性） |
 | 导航→查询决策 | `src-vite/src/common/queryDispatch.js`（纯函数，Content.vue 只执行不决策） |
+| 图片理解提示词模板 | `src-tauri/crates/lappp-core/src/t_vl_templates.rs`（内置模板库）+ `docs/dev/VL-提示词模板库.md`（设计、实测与探针用法） |
 
 **边界规则**：`lappp-core` **不允许出现 `#[tauri::command]`**——`crates/lappp-core/src/guard.rs` 是构建期守卫，会扫每个源文件。命令只能在 `src-tauri/src/` 里定义，再注册进 `generate_handler!`；服务端要暴露则加进 `bridge_gen::COMMANDS` + `EXPOSURES`（read/write/admin）。
 
@@ -138,6 +139,9 @@ pwsh -File scripts/build-windows.ps1 -BuildProfile release   # 默认 release
 11. **门禁本身要有牙**：聚合 runner 曾用 `spawnSync(npm_execpath, …, {shell:true})` 拉起各域，在 Windows 上 cmd.exe 根本不执行 `npm-cli.js`，**每个域都秒退 0**，门禁长期报「35/35 全绿」而一个测试都没跑（是 2026-11-19 上游合并时被真机/单文件跑法对出来的）。现在 runner 直接 `spawn(process.execPath, args)` 跑 `node …`，并由 `tests/aggregateRunner.test.mjs`（`test:gate`）钉住「失败域必须让 runner 退出 1」「域脚本必须真的被执行」。**新增任何门禁脚本时，先证明它能红。**
 12. **两个 lappp 实例无法并存**：WebView2 的用户数据目录由 Tauri identifier（`com.julyx10.lap`）决定，与 `--data-dir` 无关；第二个实例的 webview 起不来（带调试端口时卡在 `setup-ready` 之前、CDP 无目标）。所以冒烟前必须先关掉用户自己的实例——**并且只能用 `taskkill /PID <pid>`，绝不能用 `taskkill /IM lappp.exe`**，后者会把用户的实例一起杀掉。
 13. **事件 API 只能从 `common/transport` 进**：直接 `import ... from '@tauri-apps/api/event'` 在桌面能跑、在 Web 端静默失效（事件永远不来）。历史上有两处（`StatusBarFieldsDialog.vue`、`composables/useLibraryChangeRefresh.ts`）踩过；`tests/transport.test.mjs` 已加守卫「除传输缝外任何文件不得 import 该模块」（`import type` 白名单放行）。同理，Web 专属的令牌、SSE 重放、会话失效跳转都要在**两端**成立：浏览器令牌只走 HttpOnly Cookie（服务端按 `Sec-Fetch-*`/`Origin` 识别），SSE 帧要写协议层 `id:`（否则浏览器不产生 `Last-Event-ID`、重连重放整段缓冲），`markExpired` 之后要有订阅者把 Web 路由回 `/login`。
+14. **拍摄时间是墙上时间，不是 UTC**：`afiles.taken_date` 存的是正确瞬间，但凡是把它渲染给人看或给模型看的地方，都要用**本地时区**——前端 `new Date(ts*1000)`、SQLite `strftime(…, 'unixepoch', 'localtime')`、后端 `chrono::Local`。VL 提示词曾用 UTC 渲染，17:04 的傍晚照在提示词里变成 09:04，模型于是（正确地）说「上午」；同理 `{weekday}/{time_of_day}/{season}` 必须从本地墙上时间推导。见 `docs/dev/VL-提示词模板库.md`。
+15. **Windows 上运行中的 exe 会被锁**：探针/工具还在跑时重新链接同一个 exe 会 `LNK1104: 无法打开文件 …vl_probe.exe`；而 `cargo build … | tail -4 && ./tool` 这种写法会用 `tail` 的退出码把编译失败吃掉，**旧二进制照跑**，测出来的结论是假的。规则：编译与运行必须分开跑，编译看**它自己的**退出码（`cargo build … > log 2>&1; echo $?`），确认成功再单独启动工具。
+16. **提示词改动必须同配置重复运行再下结论**：模型输出方差极大——同一个二进制、同一批照片，两轮里「用上人脸姓名」的比例是 1/66 和 8/66，另两轮是 27/66 和 14/66。单轮 11 次调用的 4/11 对 6/11 是噪声，不能当改进证据。网关回报的 `input_tokens` 在同一轮内从 134 到 1500 不等，也不能拿来估成本。评估方法、样本量与已证/未证的结论见 `docs/dev/VL-提示词模板库.md`。
 
 ---
 
