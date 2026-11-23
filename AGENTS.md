@@ -35,7 +35,7 @@
 | 维度 | 现状（2026-11-19） |
 |---|---|
 | 版本 | `0.4.0`（`src-tauri/Cargo.toml:4`、`src-vite/package.json:4`） |
-| DB schema | 迁移 **v31**（`crates/lappp-core/src/t_migration.rs:374`）；上游 v23/v24 占位，fork 自有迁移重编号 v25–v30，v31 是 v0.4.0 同步的补偿迁移。**新迁移从 v32 起** |
+| DB schema | 迁移 **v32**（`crates/lappp-core/src/t_migration.rs` 的 `get_migrations()` 末尾；2026-11-23 更新）；上游 v23/v24 占位，fork 自有迁移重编号 v25–v30，v31 是 v0.4.0 同步的补偿迁移，v32 播种内置图片理解模板库。**新迁移从 v33 起** |
 | 连接 | WAL / `synchronous=NORMAL` / `foreign_keys=ON` / `busy_timeout=5s`（`t_sqlite.rs:11522`） |
 | 命令 | `#[tauri::command]` 共 262 处，**全部已注册**：桌面 `generate_handler!` 257 条（`src/main.rs`）+ 客户端 5 条；服务端桥接白名单 **234** 条（`crates/lappp-server/src/bridge_gen.rs`，另有断言校验三者严格划分） |
 | 前端规模 | `src/common` 48 个逻辑模块、`src/components` 74 个 `.vue`、`src/views` 7 个路由视图、`src/locales` 17 种语言（en/zh-CN 各 1676 个 leaf key，其余 1660，ko 1634） |
