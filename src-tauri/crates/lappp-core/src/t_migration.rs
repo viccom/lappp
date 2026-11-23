@@ -376,6 +376,15 @@ fn get_migrations() -> Vec<Migration> {
             description: "Replay upstream v23 tag-source column and v24 search-exclusion index",
             sql: "",
         },
+        // The built-in template library: one prompt template per role
+        // (father, mother, son, daughter, bystander) and per theme
+        // (parenting, outing, learning, effort). The seeding is idempotent,
+        // so a library that already has a template of that name keeps it.
+        Migration {
+            version: 32,
+            description: "Seed the built-in image understanding template library",
+            sql: "",
+        },
     ]
 }
 
@@ -416,6 +425,36 @@ fn seed_vl_builtin_template(conn: &Connection) -> Result<(), String> {
         ],
     )
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Seed the built-in template library: one template per role and theme.
+/// A template that is already there is never touched, so a library that was
+/// seeded before keeps its rows (and the annotations made with them).
+fn seed_vl_template_library(conn: &Connection) -> Result<(), String> {
+    // A library that never had the template tables (a partial legacy schema
+    // caught by the compensation migrations) has nothing to seed.
+    if !table_exists(conn, "vl_templates")? {
+        return Ok(());
+    }
+    for (name, prompt, system, spec) in crate::t_vl_templates::library() {
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM vl_templates WHERE name = ?1 AND version = 1)",
+                [name],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if exists {
+            continue;
+        }
+        conn.execute(
+            "INSERT INTO vl_templates(name, version, prompt_template, system_template, response_spec, is_builtin, enabled, created_at)
+             VALUES(?1, 1, ?2, ?3, ?4, 1, 1, ?5)",
+            rusqlite::params![name, prompt, system, spec, chrono::Utc::now().timestamp()],
+        )
+        .map_err(|e| format!("Failed to seed the template {name}: {e}"))?;
+    }
     Ok(())
 }
 
@@ -497,6 +536,17 @@ fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool
     }
 
     Ok(false)
+}
+
+/// Whether a table exists in the database.
+fn table_exists(conn: &Connection, table: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?1)",
+        [table],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|exists| exists == 1)
+    .map_err(|e| e.to_string())
 }
 
 pub fn check_and_migrate(conn: &Connection) -> Result<(), String> {
@@ -889,6 +939,12 @@ pub fn check_and_migrate(conn: &Connection) -> Result<(), String> {
                 tx.pragma_update(None, "user_version", migration.version)
                     .map_err(|e| e.to_string())?;
                 tx.commit().map_err(|e| e.to_string())?;
+            } else if migration.version == 32 {
+                // The built-in template library. Seeding is idempotent: a
+                // template that is already there keeps its row, its version
+                // and the annotations made with it.
+                seed_vl_template_library(conn)
+                    .map_err(|e| format!("Migration {} failed: {}", migration.version, e))?;
             } else if !migration.sql.trim().is_empty() {
                 conn.execute_batch(migration.sql)
                     .map_err(|e| format!("Migration {} failed: {}", migration.version, e))?;
@@ -988,7 +1044,7 @@ mod vl_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))
                 .unwrap(),
-            31
+            32
         );
     }
 
@@ -1043,7 +1099,7 @@ mod vl_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))
                 .unwrap(),
-            31
+            32
         );
     }
 
@@ -1194,26 +1250,114 @@ mod vl_migration_tests {
     #[test]
     fn migration_25_is_restartable_without_touching_existing_rows() {
         let conn = migrated();
+        // A free rowid: the built-in library already occupies the low ids.
+        let id: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(id), 0) + 1 FROM vl_templates",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         conn.execute(
             "INSERT INTO vl_templates(id,name,version,prompt_template,response_spec,created_at)
-             VALUES(7,'keep',1,'p','{}',1)",
-            [],
+             VALUES(?1,'keep',1,'p','{}',1)",
+            rusqlite::params![id],
         )
         .unwrap();
         // Simulate the migration completing before the version was persisted.
         conn.execute_batch("PRAGMA user_version=22;").unwrap();
         check_and_migrate(&conn).unwrap();
         assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM vl_templates WHERE id=7", [], |r| r
-                .get::<_, i64>(0))
-                .unwrap(),
+            conn.query_row(
+                "SELECT COUNT(*) FROM vl_templates WHERE id = ?1",
+                rusqlite::params![id],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
             1
         );
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))
                 .unwrap(),
-            31
+            32
         );
+    }
+
+    #[test]
+    fn migration_32_seeds_the_builtin_template_library_once() {
+        let conn = migrated();
+        let rows: Vec<(String, i64, i64, String)> = conn
+            .prepare(
+                "SELECT name, version, is_builtin, system_template FROM vl_templates
+                 WHERE is_builtin = 1 ORDER BY name",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        // The original template plus the library.
+        assert!(rows.len() > 1);
+        for (name, version, is_builtin, system) in &rows {
+            assert_eq!(*version, 1, "{name} must be seeded as version 1");
+            assert_eq!(*is_builtin, 1, "{name} must be read-only");
+            assert!(system.contains("JSON"), "{name} must fix the output shape");
+        }
+        // Every template of the library is there.
+        for template in crate::t_vl_templates::LIBRARY {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM vl_templates WHERE name = ?1 AND version = 1",
+                    rusqlite::params![template.name],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "{} is missing", template.name);
+        }
+        // Re-running the migration does not duplicate anything.
+        conn.execute_batch("PRAGMA user_version=31;").unwrap();
+        check_and_migrate(&conn).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vl_templates", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count as usize, rows.len());
+    }
+
+    #[test]
+    fn every_builtin_template_carries_the_context_and_the_rules() {
+        for template in crate::t_vl_templates::LIBRARY {
+            let prompt = crate::t_vl_templates::prompt_of(template);
+            // The factual context: the model must see the capture time with
+            // its calendar facts, the place and the annotated people.
+            for placeholder in [
+                "{file_name}",
+                "{taken_at}",
+                "{weekday}",
+                "{time_of_day}",
+                "{season}",
+                "{place}",
+                "{location}",
+                "{people}",
+                "{people_count}",
+            ] {
+                assert!(
+                    prompt.contains(placeholder),
+                    "{} misses {placeholder}",
+                    template.name
+                );
+            }
+            // The rules: only what is visible, the EXIF time wins, no
+            // invented names, and a JSON answer.
+            assert!(prompt.contains("看不清"), "{}", template.name);
+            assert!(prompt.contains("JSON"), "{}", template.name);
+        }
     }
 }
 
@@ -1251,7 +1395,7 @@ mod fts_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i32>(0))
                 .unwrap(),
-            31
+            32
         );
     }
 
@@ -1277,7 +1421,7 @@ mod fts_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i32>(0))
                 .unwrap(),
-            31
+            32
         );
     }
 }
@@ -1328,11 +1472,11 @@ mod album_filter_migration_tests {
         assert!(!has_exclusion_index(&conn));
         check_and_migrate(&conn).unwrap();
         assert!(has_exclusion_index(&conn));
-        assert_eq!(conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 31);
+        assert_eq!(conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 32);
         // Running again changes nothing.
         check_and_migrate(&conn).unwrap();
         assert!(has_exclusion_index(&conn));
-        assert_eq!(conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 31);
+        assert_eq!(conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 32);
     }
 
     #[test]
@@ -1414,7 +1558,7 @@ mod album_filter_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            31
+            32
         );
     }
 
@@ -1439,7 +1583,7 @@ mod album_filter_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            31
+            32
         );
     }
 
@@ -1467,7 +1611,7 @@ mod album_filter_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))
                 .unwrap(),
-            31
+            32
         );
     }
 
@@ -1510,7 +1654,7 @@ mod album_filter_migration_tests {
         assert_eq!(index_count, 1);
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(),
-            31
+            32
         );
         // Idempotency: re-running on the migrated library changes nothing.
         check_and_migrate(&conn).unwrap();
@@ -1536,7 +1680,7 @@ mod album_filter_migration_tests {
         check_and_migrate(&conn).unwrap();
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(),
-            31
+            32
         );
         // Exactly one source column — the compensation did not duplicate it.
         let columns: i64 = conn

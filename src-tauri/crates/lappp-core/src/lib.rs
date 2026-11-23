@@ -47,6 +47,7 @@ pub mod t_vl;
 pub mod t_vl_protocol;
 pub mod t_vl_schedule;
 pub mod t_vl_tags;
+pub mod t_vl_templates;
 pub mod t_write;
 pub mod metadata;
 
