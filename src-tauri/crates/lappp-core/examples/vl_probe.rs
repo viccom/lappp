@@ -22,6 +22,11 @@
 //! `--list-models` prints the gateway's model list with the facts the
 //! pipeline depends on — vision capability, reasoning, output cap — and
 //! exits; it needs no database.
+//!
+//! `--only` narrows the run to the named templates. `--with-card` inserts a
+//! text file in front of the rules of every template, which is how a block
+//! of context that is not a placeholder yet (a household profile, a glossary)
+//! can be tried before it becomes one.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -51,12 +56,17 @@ struct Args {
     library_id: String,
     cache_root: Option<PathBuf>,
     library: bool,
+    /// Only the templates with these names.
+    only: Option<String>,
+    /// A text file inserted in front of the rules of every template.
+    with_card: Option<PathBuf>,
 }
 
 fn usage() -> ! {
     eprintln!(
         "usage: vl_probe --db <snapshot.db> --files <id,id,...> --templates <templates.json> \
-         [--image app|thumb|original] [--out <results.json>] [--library-id <id>] [--cache-root <dir>]
+         [--image app|thumb|original] [--out <results.json>] [--library-id <id>] [--cache-root <dir>] \
+         [--only <name,name>] [--with-card <file>]
          use --library to test the built-in template library of the product"
     );
     std::process::exit(2);
@@ -71,6 +81,8 @@ fn parse_args() -> Args {
     let mut out = None;
     let mut library_id = "default".to_string();
     let mut cache_root = None;
+    let mut only = None;
+    let mut with_card = None;
 
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let mut index = 0;
@@ -97,6 +109,8 @@ fn parse_args() -> Args {
             "--out" => out = Some(PathBuf::from(value())),
             "--library-id" => library_id = value(),
             "--cache-root" => cache_root = Some(PathBuf::from(value())),
+            "--only" => only = Some(value()),
+            "--with-card" => with_card = Some(PathBuf::from(value())),
             _ => usage(),
         }
         index += 1;
@@ -122,6 +136,8 @@ fn parse_args() -> Args {
         out,
         library_id,
         cache_root,
+        only,
+        with_card,
     }
 }
 
@@ -245,11 +261,31 @@ async fn main() -> Result<(), String> {
         return list_models().await;
     }
     let args = parse_args();
-    let templates = if args.library {
+    let mut templates = if args.library {
         library_templates()
     } else {
         load_templates(args.templates.as_deref().expect("templates file"))
     };
+    if let Some(names) = &args.only {
+        let wanted: Vec<&str> = names.split(',').map(str::trim).collect();
+        templates.retain(|template| wanted.contains(&template.name.as_str()));
+        if templates.is_empty() {
+            return Err(format!("--only matched none of the templates: {names}"));
+        }
+    }
+    if let Some(path) = &args.with_card {
+        let card = std::fs::read_to_string(path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        let card = card.trim();
+        // The built-in templates end with their rules. The card goes in
+        // front of the rules, where it reads as a fact about the photo.
+        for template in &mut templates {
+            match template.prompt.rfind("\n\n规则：") {
+                Some(at) => template.prompt.insert_str(at, &format!("\n\n{card}")),
+                None => template.prompt.push_str(&format!("\n\n{card}")),
+            }
+        }
+    }
     let conn = Connection::open_with_flags(&args.db, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|error| format!("open {}: {error}", args.db.display()))?;
 
