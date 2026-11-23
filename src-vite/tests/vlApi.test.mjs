@@ -41,6 +41,7 @@ import {
   parseResponseSpec,
   parseResultJson,
   partitionModels,
+  pickDefaultTemplate,
   pickLatestVersions,
   rerankModelOptions,
   resolveApiKeyAction,
@@ -310,6 +311,27 @@ test('a response spec must be a JSON object', () => {
   assert.equal(parseResponseSpec('').ok, true);
   assert.equal(parseResponseSpec('[1,2]').ok, false);
   assert.equal(parseResponseSpec('{oops').ok, false);
+});
+
+test('the default template is the earliest built-in, whatever the names sort like', () => {
+  const templates = [
+    { id: 3, name: '客观描述', version: 1, isBuiltin: true },
+    { id: 1, name: '内置描述', version: 1, isBuiltin: true },
+    { id: 2, name: '爸爸的视角', version: 1, isBuiltin: true },
+    { id: 4, name: '我的模板', version: 1, isBuiltin: false },
+  ];
+  assert.equal(pickDefaultTemplate(templates).id, 1);
+  // Without a built-in the first latest version is used.
+  assert.equal(pickDefaultTemplate([{ id: 9, name: 'mine', version: 1 }]).id, 9);
+  assert.equal(pickDefaultTemplate([]), null);
+  assert.equal(pickDefaultTemplate(null), null);
+  // A disabled built-in is skipped where only enabled templates may run.
+  const disabledFirst = [
+    { id: 1, name: '内置描述', version: 1, isBuiltin: true, enabled: false },
+    { id: 2, name: '客观描述', version: 1, isBuiltin: true, enabled: true },
+  ];
+  assert.equal(pickDefaultTemplate(disabledFirst, { enabledOnly: true }).id, 2);
+  assert.equal(pickDefaultTemplate(disabledFirst).id, 1);
 });
 
 test('the templates are labelled with their version and grouped by name', () => {

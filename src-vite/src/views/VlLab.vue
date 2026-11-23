@@ -300,6 +300,7 @@ import {
   parseResponseSpec,
   parseResultJson,
   pickLatestCall,
+  pickDefaultTemplate,
   pickLatestVersions,
   templateLabel,
 } from '@/common/vlLogic';
@@ -496,7 +497,8 @@ async function loadTemplates() {
     templates.value = [];
   }
   if (!latestTemplates.value.some(template => template.id === templateId.value)) {
-    templateId.value = latestTemplates.value.length ? latestTemplates.value[0].id : 0;
+    const fallback = pickDefaultTemplate(templates.value);
+    templateId.value = fallback ? Number(fallback.id) : 0;
   }
 }
 

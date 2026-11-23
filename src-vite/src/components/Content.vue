@@ -909,7 +909,7 @@ import { rerankHitList } from '@/common/vlLabLogic';
 /// VL lab, keeping the fallback cheap.
 const AI_SEARCH_RERANK_LIMIT = 20;
 import { runVlAnalysis, listVlTemplates, queueVlTask } from '@/common/vlApi';
-import { describeVlError, pickLatestVersions, templateLabel } from '@/common/vlLogic';
+import { describeVlError, pickDefaultTemplate, pickLatestVersions, templateLabel } from '@/common/vlLogic';
 import { QUERY_KIND, TITLE_KIND, planNavigationQuery } from '@/common/queryDispatch';
 import { handleVideoPlaybackShortcut, handleVideoEscapeShortcut } from '@/common/video';
 import { clearFolderFileCounts, setFolderFileCount, getCountedFolderPaths } from '@/composables/useAlbumSelection';
@@ -9414,7 +9414,8 @@ async function openVlAnalyzeDialog(files: any[]) {
     vlTemplates.value = [];
   }
   if (!vlTemplateOptions.value.some(tpl => Number(tpl.id) === Number(vlAnalyzeTemplateId.value))) {
-    vlAnalyzeTemplateId.value = Number(vlTemplateOptions.value[0]?.id || 0);
+    const fallback = pickDefaultTemplate(vlTemplates.value, { enabledOnly: true });
+    vlAnalyzeTemplateId.value = Number(fallback?.id || 0);
   }
 }
 

@@ -246,6 +246,21 @@ export function pickLatestVersions(templates) {
   return [...byName.values()].sort((a, b) => String(a.name ?? '').localeCompare(String(b.name ?? '')));
 }
 
+/// The template a surface starts from when the user has not chosen one.
+///
+/// The earliest built-in is the neutral description every library is seeded
+/// with first, so adding more built-ins never silently changes what a run
+/// sends. Taking the first name instead would make a role template the
+/// default as soon as one exists.
+export function pickDefaultTemplate(templates, options = {}) {
+  const enabledOnly = options.enabledOnly === true;
+  const usable = pickLatestVersions(templates).filter((template) => !enabledOnly || template.enabled !== false);
+  const builtin = usable
+    .filter((template) => template.isBuiltin === true)
+    .sort((left, right) => Number(left.id) - Number(right.id));
+  return builtin[0] ?? usable[0] ?? null;
+}
+
 /**
  * The edit and delete actions of a template row.
  *
