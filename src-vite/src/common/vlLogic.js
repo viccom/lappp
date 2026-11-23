@@ -34,7 +34,44 @@ export function normalizeMaxConcurrency(value) {
 }
 
 /// Placeholders the backend substitutes into a prompt template.
-export const VL_PROMPT_PLACEHOLDERS = ['{file_name}', '{exif_summary}', '{taken_at}', '{camera}'];
+export const VL_PROMPT_PLACEHOLDERS = [
+  '{file_name}',
+  '{exif_summary}',
+  '{taken_at}',
+  '{camera}',
+  '{tags}',
+  '{people}',
+  '{people_count}',
+  '{weekday}',
+  '{time_of_day}',
+  '{season}',
+  '{location}',
+  '{place}',
+  '{gps}',
+  '{comments}',
+  '{title}',
+  '{headline}',
+  '{description}',
+  '{artist}',
+  '{copyright}',
+  '{software}',
+  '{camera_make}',
+  '{camera_model}',
+  '{lens}',
+  '{exposure}',
+  '{f_number}',
+  '{focal_length}',
+  '{iso}',
+  '{flash}',
+  '{dimensions}',
+  '{duration}',
+  '{rating}',
+  '{favorite}',
+  '{format}',
+  '{file_size}',
+  '{created_at}',
+  '{modified_at}',
+];
 
 /// Result fields with a translated label; other fields fall back to their key.
 export const VL_FIELD_LABEL_KEYS = {

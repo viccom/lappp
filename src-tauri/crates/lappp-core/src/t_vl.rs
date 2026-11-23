@@ -4,6 +4,7 @@
 //! produced from a successful call, and the call evidence kept for every
 //! request (successful or not).
 use base64::Engine as _;
+use chrono::{Datelike, Timelike};
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -1056,8 +1057,16 @@ pub struct PromptContext {
     // library relations
     pub tags: Option<String>,
     pub people: Option<String>,
+    /// How many named people the face annotations give.
+    pub people_count: Option<String>,
+    // calendar facts derived from the capture time
+    pub weekday: Option<String>,
+    pub time_of_day: Option<String>,
+    pub season: Option<String>,
     // location
     pub location: Option<String>,
+    /// The place on its own, without the region chain.
+    pub place: Option<String>,
     pub gps: Option<String>,
     // descriptive metadata
     pub comments: Option<String>,
@@ -1105,14 +1114,19 @@ pub fn render_system(template: &str, context: &PromptContext) -> String {
 /// The shared placeholder substitution of the prompt and the system message.
 fn render_template(template: &str, context: &PromptContext) -> String {
     let mut rendered = template.to_string();
-    let values: [(&str, Option<&str>); 31] = [
+    let values: [(&str, Option<&str>); 36] = [
         ("{file_name}", context.file_name.as_deref()),
         ("{exif_summary}", context.exif_summary.as_deref()),
         ("{taken_at}", context.taken_at.as_deref()),
         ("{camera}", context.camera.as_deref()),
         ("{tags}", context.tags.as_deref()),
         ("{people}", context.people.as_deref()),
+        ("{people_count}", context.people_count.as_deref()),
+        ("{weekday}", context.weekday.as_deref()),
+        ("{time_of_day}", context.time_of_day.as_deref()),
+        ("{season}", context.season.as_deref()),
         ("{location}", context.location.as_deref()),
+        ("{place}", context.place.as_deref()),
         ("{gps}", context.gps.as_deref()),
         ("{comments}", context.comments.as_deref()),
         ("{title}", context.title.as_deref()),
@@ -1265,6 +1279,7 @@ pub fn prompt_context(file: &crate::t_sqlite::AFile) -> PromptContext {
     };
 
     let taken_at = timestamp_text(file.taken_date);
+    let place = clean(file.geo_name.as_deref()).or_else(|| clean(file.geo_admin1.as_deref()));
 
     PromptContext {
         file_name: Some(file.name.clone()),
@@ -1273,6 +1288,11 @@ pub fn prompt_context(file: &crate::t_sqlite::AFile) -> PromptContext {
         camera,
         tags: None,
         people: None,
+        people_count: None,
+        weekday: file.taken_date.and_then(weekday_text),
+        time_of_day: file.taken_date.and_then(time_of_day_text),
+        season: file.taken_date.and_then(season_text),
+        place,
         location: joined_segments(&[
             clean(file.geo_name.as_deref()),
             clean(file.geo_admin1.as_deref()),
@@ -1322,9 +1342,50 @@ pub fn prompt_context_with_conn(conn: &Connection, file: &crate::t_sqlite::AFile
     let mut context = prompt_context(file);
     if let Some(file_id) = file.id {
         context.tags = names_text(tag_names(conn, file_id));
-        context.people = names_text(people_names(conn, file_id));
+        let people = people_names(conn, file_id);
+        context.people_count = (!people.is_empty()).then(|| people.len().to_string());
+        context.people = names_text(people);
     }
     context
+}
+
+/// The weekday of a capture time, in Chinese.
+fn weekday_text(seconds: i64) -> Option<String> {
+    const WEEKDAYS: [&str; 7] = [
+        "星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日",
+    ];
+    local_datetime(seconds).map(|value| {
+        // `weekday()` counts from Monday = 0, the same order as the table.
+        WEEKDAYS[value.weekday().num_days_from_monday() as usize].to_string()
+    })
+}
+
+/// The part of the day a capture time falls into, in Chinese.
+fn time_of_day_text(seconds: i64) -> Option<String> {
+    let hour = local_datetime(seconds)?.hour();
+    let label = match hour {
+        0..=4 => "凌晨",
+        5..=7 => "清晨",
+        8..=10 => "上午",
+        11..=12 => "中午",
+        13..=16 => "下午",
+        17..=18 => "傍晚",
+        19..=22 => "晚上",
+        _ => "深夜",
+    };
+    Some(label.to_string())
+}
+
+/// The season a capture time falls into, in Chinese.
+fn season_text(seconds: i64) -> Option<String> {
+    let month = local_datetime(seconds)?.month();
+    let label = match month {
+        12 | 1 | 2 => "冬季",
+        3..=5 => "春季",
+        6..=8 => "夏季",
+        _ => "秋季",
+    };
+    Some(label.to_string())
 }
 
 fn names_text(names: Vec<String>) -> Option<String> {
@@ -4339,7 +4400,12 @@ mod tests {
         context.camera = Some("v".into());
         context.tags = Some("v".into());
         context.people = Some("v".into());
+        context.people_count = Some("v".into());
+        context.weekday = Some("v".into());
+        context.time_of_day = Some("v".into());
+        context.season = Some("v".into());
         context.location = Some("v".into());
+        context.place = Some("v".into());
         context.gps = Some("v".into());
         context.comments = Some("v".into());
         context.title = Some("v".into());
@@ -4365,7 +4431,8 @@ mod tests {
         context.created_at = Some("v".into());
         context.modified_at = Some("v".into());
         let template = "{file_name}{exif_summary}{taken_at}{camera}{tags}{people}\
-             {location}{gps}{comments}{title}{headline}{description}{artist}{copyright}\
+             {people_count}{weekday}{time_of_day}{season}{location}{place}{gps}{comments}\
+             {title}{headline}{description}{artist}{copyright}\
              {software}{camera_make}{camera_model}{lens}{exposure}{f_number}{focal_length}\
              {iso}{flash}{dimensions}{duration}{rating}{favorite}{format}{file_size}\
              {created_at}{modified_at}";
@@ -4374,7 +4441,7 @@ mod tests {
             !rendered.contains('{'),
             "a declared placeholder was left unreplaced: {rendered}"
         );
-        assert_eq!(rendered.chars().filter(|ch| *ch == 'v').count(), 31);
+        assert_eq!(rendered.chars().filter(|ch| *ch == 'v').count(), 36);
     }
 
     #[test]
@@ -4458,6 +4525,32 @@ mod tests {
         // Relations need a connection; the pure builder leaves them empty.
         assert!(context.tags.is_none());
         assert!(context.people.is_none());
+    }
+
+    #[test]
+    fn the_context_derives_the_calendar_facts_from_the_capture_time() {
+        // The capture time is a wall clock: whatever the machine's timezone
+        // is, 2021-07-17 17:04 local must read as a Saturday, late
+        // afternoon, midsummer.
+        use chrono::TimeZone as _;
+        let taken = chrono::Local
+            .with_ymd_and_hms(2021, 7, 17, 17, 4, 41)
+            .earliest()
+            .expect("a local time")
+            .timestamp();
+        let file = crate::t_sqlite::AFile {
+            name: "a.jpg".to_string(),
+            taken_date: Some(taken),
+            geo_name: Some("大屯".to_string()),
+            geo_admin1: Some("北京".to_string()),
+            ..Default::default()
+        };
+        let context = prompt_context(&file);
+        assert_eq!(context.taken_at.as_deref(), Some("2021-07-17 17:04:41"));
+        assert_eq!(context.weekday.as_deref(), Some("星期六"));
+        assert_eq!(context.time_of_day.as_deref(), Some("傍晚"));
+        assert_eq!(context.season.as_deref(), Some("夏季"));
+        assert_eq!(context.place.as_deref(), Some("大屯"));
     }
 
     #[test]
