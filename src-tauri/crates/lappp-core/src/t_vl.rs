@@ -1406,6 +1406,26 @@ fn table_exists(conn: &Connection, name: &str) -> bool {
     .unwrap_or(false)
 }
 
+/// Whether a table has a column.
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> bool {
+    let pragma = format!("PRAGMA table_info({table})");
+    let Ok(mut stmt) = conn.prepare(&pragma) else {
+        return false;
+    };
+    let Ok(mut rows) = stmt.query([]) else {
+        return false;
+    };
+    while let Ok(Some(row)) = rows.next() {
+        let Ok(name) = row.get::<_, String>(1) else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case(column) {
+            return true;
+        }
+    }
+    false
+}
+
 /// The names of the tags of a file, ordered by name.
 fn tag_names(conn: &Connection, file_id: i64) -> Vec<String> {
     if !table_exists(conn, "afile_tags") || !table_exists(conn, "atags") {
@@ -1427,25 +1447,66 @@ fn tag_names(conn: &Connection, file_id: i64) -> Vec<String> {
         .collect()
 }
 
-/// The names of the people a file shows, ordered by name.
+/// The names of the people a file shows, ordered by where they stand.
+///
+/// The order is the order of the faces in the picture — left to right — not
+/// the alphabetical order of the names: a model that is told "外婆, 李忻,
+/// 董维康, 董开源" can only guess which name belongs to which face, but one
+/// that is told the faces are listed from left to right can point at the
+/// right one.
 fn people_names(conn: &Connection, file_id: i64) -> Vec<String> {
     if !table_exists(conn, "faces") || !table_exists(conn, "persons") {
         return Vec::new();
     }
-    let Ok(mut stmt) = conn.prepare(
-        "SELECT DISTINCT p.name FROM faces f
+    // The box column arrived with the face geometry; a library without it
+    // still has the names, they just cannot be ordered by position.
+    let has_box = table_has_column(conn, "faces", "bbox");
+    let sql = if has_box {
+        "SELECT p.name, f.bbox FROM faces f
          JOIN persons p ON p.id = f.person_id
-         WHERE f.file_id = ?1 AND p.name IS NOT NULL
-         ORDER BY p.name COLLATE NOCASE",
-    ) else {
+         WHERE f.file_id = ?1 AND p.name IS NOT NULL"
+    } else {
+        "SELECT p.name, NULL FROM faces f
+         JOIN persons p ON p.id = f.person_id
+         WHERE f.file_id = ?1 AND p.name IS NOT NULL"
+    };
+    let Ok(mut stmt) = conn.prepare(sql) else {
         return Vec::new();
     };
-    let Ok(rows) = stmt.query_map(params![file_id], |row| row.get::<_, String>(0)) else {
+    let Ok(rows) = stmt.query_map(params![file_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+    }) else {
         return Vec::new();
     };
-    rows.flatten()
-        .filter(|name| !name.trim().is_empty())
-        .collect()
+
+    let mut entries: Vec<(f64, String)> = Vec::new();
+    for (name, bbox) in rows.flatten() {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        // The horizontal center of the face; a face without a usable box
+        // keeps its place at the end of the row.
+        let center = bbox
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<crate::t_face::FaceBox>(raw).ok())
+            .map(|face| f64::from(face.x) + f64::from(face.width) / 2.0)
+            .unwrap_or(f64::MAX);
+        entries.push((center, name));
+    }
+    entries.sort_by(|left, right| {
+        left.0
+            .partial_cmp(&right.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut names: Vec<String> = Vec::new();
+    for (_, name) in entries {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
 }
 
 // ----------------------------------------------------------------------------
@@ -4589,6 +4650,32 @@ mod tests {
         let context = prompt_context_with_conn(&empty, &without_id);
         assert!(context.tags.is_none());
         assert!(context.people.is_none());
+    }
+
+    #[test]
+    fn the_people_are_listed_in_the_order_they_stand_in_the_picture() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE persons(id INTEGER PRIMARY KEY, name TEXT);
+             CREATE TABLE faces(id INTEGER PRIMARY KEY, file_id INTEGER, person_id INTEGER, bbox TEXT);
+             INSERT INTO persons VALUES(1,'右侧的人'),(2,'左侧的人'),(3,'中间的人');
+             INSERT INTO faces VALUES
+               (1,7,1,'{\"x\":2500,\"y\":100,\"width\":200,\"height\":200,\"confidence\":0.9}'),
+               (2,7,2,'{\"x\":200,\"y\":100,\"width\":200,\"height\":200,\"confidence\":0.9}'),
+               (3,7,3,'{\"x\":1200,\"y\":100,\"width\":200,\"height\":200,\"confidence\":0.9}');",
+        )
+        .unwrap();
+        let file = crate::t_sqlite::AFile {
+            id: Some(7),
+            name: "a.jpg".to_string(),
+            ..Default::default()
+        };
+        let context = prompt_context_with_conn(&conn, &file);
+        assert_eq!(
+            context.people.as_deref(),
+            Some("左侧的人, 中间的人, 右侧的人")
+        );
+        assert_eq!(context.people_count.as_deref(), Some("3"));
     }
 
     #[test]
