@@ -1169,12 +1169,24 @@ fn joined_segments(parts: &[Option<String>]) -> Option<String> {
     }
 }
 
-/// A unix timestamp as local-looking `YYYY-MM-DD HH:MM:SS` (UTC fields, the
-/// same convention `taken_at` already used).
+/// A unix timestamp as the local wall clock `YYYY-MM-DD HH:MM:SS`.
+///
+/// The capture time is an instant, but the model has to read it as the time
+/// the photographer saw on the camera: rendering it in UTC shifts every
+/// photo by the machine's offset, and a 17:04 sunset comes out as "09:04",
+/// which the model then (correctly) calls "morning". The rest of the app
+/// already renders these stamps in local time (the webview's `Date`, and
+/// SQLite's `strftime(..., 'unixepoch', 'localtime')`), so the prompt does
+/// the same.
 fn timestamp_text(seconds: Option<i64>) -> Option<String> {
     seconds
-        .and_then(|value| chrono::DateTime::from_timestamp(value, 0))
+        .and_then(local_datetime)
         .map(|value| value.format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+/// A unix timestamp as a local wall clock date-time.
+fn local_datetime(seconds: i64) -> Option<chrono::DateTime<chrono::Local>> {
+    chrono::DateTime::from_timestamp(seconds, 0).map(|value| value.with_timezone(&chrono::Local))
 }
 
 /// A byte count as a short human readable string.
@@ -4275,6 +4287,29 @@ mod tests {
         assert_eq!(
             rendered,
             "File: IMG_0001.jpg\nEXIF: f/1.8 1/60s ISO400\nTaken: 2024-05-01 10:00:00\nCamera: Canon EOS R5"
+        );
+    }
+
+    #[test]
+    fn the_capture_time_reaches_the_prompt_on_the_local_wall_clock() {
+        // The capture time is a wall clock. Whatever zone the machine is in,
+        // 17:04 local has to reach the prompt as 17:04: rendering the instant
+        // in UTC turned it into 09:04 and the model called an evening photo
+        // "morning".
+        use chrono::TimeZone as _;
+        let taken = chrono::Local
+            .with_ymd_and_hms(2021, 7, 17, 17, 4, 41)
+            .earliest()
+            .expect("a local time")
+            .timestamp();
+        let file = crate::t_sqlite::AFile {
+            name: "a.jpg".to_string(),
+            taken_date: Some(taken),
+            ..Default::default()
+        };
+        assert_eq!(
+            prompt_context(&file).taken_at.as_deref(),
+            Some("2021-07-17 17:04:41")
         );
     }
 
