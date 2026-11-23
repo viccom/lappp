@@ -18,7 +18,7 @@
 //   3. the ShortcutActionId union equals the runtime registry ids exactly —
 //      no drift, and no collapse to plain `string` (which would make every
 //      typo legal).
-// (.vue consumers still need the full vue-tsc gate; SOP-上游同步升级.md §7-②.)
+// (.vue consumers still need the full vue-tsc gate; SOP-上游同步升级.md §4.)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";

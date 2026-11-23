@@ -1,11 +1,9 @@
-// Frontend aggregate test runner (SOP-上游同步升级.md §7-③).
+// Frontend aggregate test runner (SOP-上游同步升级.md §4).
 //
 // Runs every `test:*` domain script from src-vite/package.json in sequence,
-// collects results, and fails if any domain fails. `test:quarantine` is
-// excluded on purpose: it lists legacy harnesses that are known-red against
-// refactored source (stale extraction anchors, not product bugs) and is
-// tracked for repair in the SOP backlog. tests/orphanGuard.test.mjs keeps
-// that honest: every tests/*.test.mjs must be reachable from some script.
+// collects results, and fails if any domain fails. tests/orphanGuard.test.mjs
+// keeps the domain list honest: every tests/*.test.mjs must be reachable from
+// some script.
 //
 // The domains are spawned as `node <args>` DIRECTLY, never through npm:
 // spawning `npm_execpath` (npm-cli.js) through a shell on Windows does not
@@ -29,7 +27,7 @@ const workDir = process.env.LAP_TEST_ROOT || viteRoot;
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
 
 const domains = Object.keys(pkg.scripts)
-  .filter((k) => /^test:/.test(k) && k !== "test:quarantine")
+  .filter((k) => /^test:/.test(k))
   .sort();
 
 /** Split a domain command into an executable and its arguments. */

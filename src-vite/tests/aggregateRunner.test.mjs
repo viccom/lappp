@@ -50,13 +50,21 @@ test('a failing domain makes the aggregate runner exit non-zero', () => {
   assert.match(res.stdout, /failed: test:bad/);
 });
 
-test('the aggregate runner actually executes the domain scripts', () => {
+test('the aggregate runner executes every test domain, including a formerly quarantined name', () => {
   const dir = fixture();
+  const pkgPath = join(dir, 'package.json');
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+  writeFileSync(join(dir, 'quarantine.mjs'), 'console.log("ran-quarantine");\n');
+  pkg.scripts['test:quarantine'] = 'node quarantine.mjs';
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+
   const res = runAggregate(dir);
-  // Both scripts print; if the runner had swallowed the spawn, neither
-  // marker would appear in the output.
+
+  // A domain must execute even if its old name once meant a quarantine list.
   assert.match(res.stdout, /ran-ok/);
   assert.match(res.stdout, /ran-bad/);
+  assert.match(res.stdout, /ran-quarantine/);
+  assert.match(res.stdout, /2\/3 test domains passed/);
 });
 
 test('an all-green aggregate exits zero and reports every domain', () => {
