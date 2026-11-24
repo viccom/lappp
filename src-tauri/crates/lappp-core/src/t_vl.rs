@@ -1485,6 +1485,11 @@ fn people_names(conn: &Connection, file_id: i64) -> Vec<String> {
         if name.is_empty() {
             continue;
         }
+        // The clustering names the groups nobody named "Person 12" and the
+        // like. Those names are about nobody and stay out of the prompt.
+        if crate::t_sqlite::Person::is_automatic_name(Some(name.as_str())) {
+            continue;
+        }
         // The horizontal center of the face; a face without a usable box
         // keeps its place at the end of the row.
         let center = bbox
@@ -4676,6 +4681,50 @@ mod tests {
             Some("左侧的人, 中间的人, 右侧的人")
         );
         assert_eq!(context.people_count.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn the_automatic_names_of_unnamed_people_stay_out_of_the_prompt() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE persons(id INTEGER PRIMARY KEY, name TEXT);
+             CREATE TABLE faces(id INTEGER PRIMARY KEY, file_id INTEGER, person_id INTEGER);
+             INSERT INTO persons VALUES(1,'小明'),(2,'Person 12'),(3,'person 3'),(4,NULL);
+             INSERT INTO faces VALUES(1,7,1),(2,7,2),(3,7,3),(4,7,4);",
+        )
+        .unwrap();
+        let file = crate::t_sqlite::AFile {
+            id: Some(7),
+            name: "a.jpg".to_string(),
+            ..Default::default()
+        };
+
+        let context = prompt_context_with_conn(&conn, &file);
+
+        assert_eq!(context.people.as_deref(), Some("小明"));
+        assert_eq!(context.people_count.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn a_photo_of_people_without_a_name_has_no_people_in_the_prompt() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE persons(id INTEGER PRIMARY KEY, name TEXT);
+             CREATE TABLE faces(id INTEGER PRIMARY KEY, file_id INTEGER, person_id INTEGER);
+             INSERT INTO persons VALUES(1,'Person 12'),(2,NULL);
+             INSERT INTO faces VALUES(1,7,1),(2,7,2);",
+        )
+        .unwrap();
+        let file = crate::t_sqlite::AFile {
+            id: Some(7),
+            name: "a.jpg".to_string(),
+            ..Default::default()
+        };
+
+        let context = prompt_context_with_conn(&conn, &file);
+
+        assert_eq!(context.people, None);
+        assert_eq!(context.people_count, None);
     }
 
     #[test]

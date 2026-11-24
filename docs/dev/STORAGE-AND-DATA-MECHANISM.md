@@ -1,6 +1,6 @@
 # lap 数据与存储机制
 
-> 2026-11-13 整理。基于 develop 分支（库 schema v27）源码与 debug 库实测；所有论断均给出代码出处或实测证据。
+> 2026-11-13 整理，2026-11-24 更新。基于 develop 分支（库 schema **v32**）源码与 debug 库实测；所有论断均给出代码出处或实测证据。
 > 阅读对象：在 lap 上做演进开发的人。目标：回答「数据放在哪、跟着谁走、什么操作会破坏什么」。
 
 ## 1. 身份链：一切机制的核心
@@ -12,7 +12,7 @@ library（每个库一个独立 default.db，按安装 identifier 隔离）
             └─ afile（文件行，唯一键 = folder_id + name）   ← 身份终点
 ```
 
-- **文件身份 = （文件夹， 文件名），不是内容哈希**：`uidx_afiles_folder_id_name ON afiles(folder_id, name)`（`src-tauri/src/t_sqlite.rs`）。路径变 = 身份变，与内容是否相同无关。
+- **文件身份 = （文件夹， 文件名），不是内容哈希**：`uidx_afiles_folder_id_name ON afiles(folder_id, name)`（`src-tauri/crates/lappp-core/src/t_sqlite.rs`）。路径变 = 身份变，与内容是否相同无关。
 - album 添加只拦两种情况：完全相同路径、与现有 album 嵌套/互相包含——*"A folder can only belong to one album tree"*（`Album::add_album_to_db`）。
 - **没有 relink**：`edit_album` 只能改名称/描述/文件类型/小图过滤/排除目录，**不能改 path**。改路径 = 删旧 album + 加新 album。
 - rating、收藏等主观数据存放在 afiles 行上（即跟随路径身份，不跟随内容）。
@@ -95,7 +95,7 @@ library（每个库一个独立 default.db，按安装 identifier 隔离）
 |---|---|---|
 | `com.julyx10.lap\` | 安装版（release，identifier 无后缀） | |
 | ├ `app-config.json` | 应用配置（含 VL 网关/嵌入源/并发等） | **api_key 只写不回读** |
-| ├ `libraries\default.db` | 真实图库（本机实测仍为 schema v18） | 迁移前必须备份 |
+| ├ `libraries\default.db` | 真实图库（2026-11-24 只读实测：安装版仍是 schema v18，debug 版 v31；启动时自动迁移） | 迁移前必须备份 |
 | ├ `default\` | 库 id 命名的缩略图缓存根 | 可删，重扫重建 |
 | ├ `models\` | 运行时下载的模型（multilingual、bge-local） | §5 |
 | ├ `EBWebView\` | WebView2 用户数据目录 | **release/debug 共用**（按 identifier 派生） |
@@ -131,11 +131,11 @@ library（每个库一个独立 default.db，按安装 identifier 隔离）
 
 ## 10. 代码索引（写作时核对过的出处）
 
-- 身份与 schema：`src-tauri/src/t_sqlite.rs`（afiles/athumbs schema、`build_thumb_key`、`image_bytes_on`、`relocate_for_thumb_keys`）
-- 扫描与离线：`src-tauri/src/t_utils.rs`（`build_nodes`、scan_complete 防污染、相册可达性）
-- 相册与可达性命令：`src-tauri/src/t_cmds.rs`（`add_album`/`edit_album`/`check_album_accessibility`/`original_unavailable` 硬闸）
-- VL/向量/标签：`src-tauri/src/t_vl.rs`、`t_embed.rs`、`t_vl_tags.rs`、`t_tags.rs`
-- XMP：`src-tauri/src/metadata/xmp.rs`（sidecar 导入、`axmp_local_tags_*` 触发器）
-- 配置与密钥：`src-tauri/src/t_config.rs`（app-data 目录、`vl-api-key` sidecar、resource models 目录）
+- 身份与 schema：`src-tauri/crates/lappp-core/src/t_sqlite.rs`（afiles/athumbs schema、`build_thumb_key`、`image_bytes_on`、`relocate_for_thumb_keys`）
+- 扫描与离线：`src-tauri/crates/lappp-core/src/t_utils.rs`（`build_nodes`、scan_complete 防污染、相册可达性）
+- 相册与可达性命令：`src-tauri/crates/lappp-core/src/t_cmds.rs`（`add_album`/`edit_album`/`check_album_accessibility`/`original_unavailable` 硬闸）
+- VL/向量/标签：`src-tauri/crates/lappp-core/src/t_vl.rs`、`t_embed.rs`、`t_vl_tags.rs`、`t_tags.rs`
+- XMP：`src-tauri/crates/lappp-core/src/metadata/xmp.rs`（sidecar 导入、`axmp_local_tags_*` 触发器）
+- 配置与密钥：`src-tauri/crates/lappp-core/src/t_config.rs`（app-data 目录、`vl-api-key` sidecar、resource models 目录）
 - 前端可达性：`src-vite/src/common/availability.ts`
 - 模型资产下载契约：`scripts/download_models.sh`（SHA-256 校验）

@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 /// Schema of the image-understanding tables (migration 23).
 /// Shared with the storage layer so tests build the same tables.
@@ -432,26 +432,76 @@ fn seed_vl_builtin_template(conn: &Connection) -> Result<(), String> {
 /// A template that is already there is never touched, so a library that was
 /// seeded before keeps its rows (and the annotations made with them).
 fn seed_vl_template_library(conn: &Connection) -> Result<(), String> {
+    seed_templates(conn, crate::t_vl_templates::library())
+}
+
+/// Seed a template catalog.
+///
+/// The rows of a template are immutable: a scheduled task and an annotation
+/// point at a template id, so the text of a built-in template never changes
+/// under the feet of the user. When the built-in text of a template changes,
+/// the new text arrives as **a new version row** and the old row stays.
+///
+/// The new row keeps the state the user gave the template: a template the
+/// user turned off does not come back on by itself.
+fn seed_templates(
+    conn: &Connection,
+    templates: Vec<(&str, String, &str, &str)>,
+) -> Result<(), String> {
     // A library that never had the template tables (a partial legacy schema
     // caught by the compensation migrations) has nothing to seed.
     if !table_exists(conn, "vl_templates")? {
         return Ok(());
     }
-    for (name, prompt, system, spec) in crate::t_vl_templates::library() {
-        let exists: bool = conn
+    for (name, prompt, system, spec) in templates {
+        // The newest row of this name is the one the user sees.
+        let latest: Option<(i64, String, String, String, i64)> = conn
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM vl_templates WHERE name = ?1 AND version = 1)",
+                "SELECT version, prompt_template, system_template, response_spec, enabled
+                 FROM vl_templates WHERE name = ?1 ORDER BY version DESC LIMIT 1",
                 [name],
-                |row| row.get(0),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
+            .optional()
             .map_err(|e| e.to_string())?;
-        if exists {
-            continue;
-        }
+        let (version, enabled) = match latest {
+            None => (1, 1),
+            Some((_version, stored_prompt, stored_system, stored_spec, enabled)) => {
+                if stored_prompt == prompt && stored_system == system && stored_spec == spec {
+                    // The library already has this text.
+                    continue;
+                }
+                // The text changed: the next free version of this name takes it.
+                let next: i64 = conn
+                    .query_row(
+                        "SELECT COALESCE(MAX(version), 0) + 1 FROM vl_templates WHERE name = ?1",
+                        [name],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| e.to_string())?;
+                (next, enabled)
+            }
+        };
         conn.execute(
             "INSERT INTO vl_templates(name, version, prompt_template, system_template, response_spec, is_builtin, enabled, created_at)
-             VALUES(?1, 1, ?2, ?3, ?4, 1, 1, ?5)",
-            rusqlite::params![name, prompt, system, spec, chrono::Utc::now().timestamp()],
+             VALUES(?1, ?2, ?3, ?4, ?5, 1, ?6, ?7)",
+            rusqlite::params![
+                name,
+                version,
+                prompt,
+                system,
+                spec,
+                enabled,
+                chrono::Utc::now().timestamp()
+            ],
         )
         .map_err(|e| format!("Failed to seed the template {name}: {e}"))?;
     }
@@ -1281,6 +1331,110 @@ mod vl_migration_tests {
                 .unwrap(),
             32
         );
+    }
+
+    #[test]
+    fn a_builtin_template_whose_text_changed_arrives_as_a_new_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE vl_templates(
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                prompt_template TEXT NOT NULL,
+                system_template TEXT NOT NULL DEFAULT '',
+                response_spec TEXT NOT NULL,
+                is_builtin INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL,
+                UNIQUE(name, version));",
+        )
+        .unwrap();
+
+        // The first seeding writes version 1.
+        seed_templates(
+            &conn,
+            vec![("观察者", "第一版".to_string(), "系统", "JSON")],
+        )
+        .unwrap();
+        let versions: Vec<i64> = conn
+            .prepare("SELECT version FROM vl_templates WHERE name = '观察者' ORDER BY version")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(versions, vec![1]);
+
+        // Seeding the same text again changes nothing.
+        seed_templates(
+            &conn,
+            vec![("观察者", "第一版".to_string(), "系统", "JSON")],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vl_templates", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // Changed text: a new version row, the old one stays untouched.
+        seed_templates(
+            &conn,
+            vec![("观察者", "第二版".to_string(), "系统", "JSON")],
+        )
+        .unwrap();
+        let rows: Vec<(i64, String)> = conn
+            .prepare("SELECT version, prompt_template FROM vl_templates WHERE name = '观察者' ORDER BY version")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![(1, "第一版".to_string()), (2, "第二版".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_new_version_keeps_the_state_the_user_gave_the_template() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE vl_templates(
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                prompt_template TEXT NOT NULL,
+                system_template TEXT NOT NULL DEFAULT '',
+                response_spec TEXT NOT NULL,
+                is_builtin INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL,
+                UNIQUE(name, version));",
+        )
+        .unwrap();
+        seed_templates(
+            &conn,
+            vec![("观察者", "第一版".to_string(), "系统", "JSON")],
+        )
+        .unwrap();
+        // The user turned the template off.
+        conn.execute("UPDATE vl_templates SET enabled = 0", []).unwrap();
+
+        seed_templates(
+            &conn,
+            vec![("观察者", "第二版".to_string(), "系统", "JSON")],
+        )
+        .unwrap();
+
+        let enabled: Vec<i64> = conn
+            .prepare("SELECT enabled FROM vl_templates WHERE name = '观察者' ORDER BY version")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(enabled, vec![0, 0]);
     }
 
     #[test]

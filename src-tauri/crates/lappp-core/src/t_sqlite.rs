@@ -10719,6 +10719,25 @@ impl Person {
 
         Ok(conn.last_insert_rowid())
     }
+
+    /// Whether a person row carries a name the user typed.
+    ///
+    /// The clustering gives every unnamed group a name like "Person 12"; those
+    /// names are about nobody and never leave the library: not into the prompt,
+    /// not into the search index.
+    ///
+    /// This is the one place that decides what an automatic name looks like.
+    /// The SQL side of the library spells the same rule as
+    /// `name NOT LIKE 'Person %'`.
+    pub(crate) fn is_automatic_name(name: Option<&str>) -> bool {
+        match name {
+            None => true,
+            Some(name) => {
+                let trimmed = name.trim();
+                trimmed.is_empty() || trimmed.to_lowercase().starts_with("person ")
+            }
+        }
+    }
 }
 
 /// The files that show a person.
@@ -10862,7 +10881,7 @@ impl Face {
         Ok(faces)
     }
 
-    /// Get slim face data for clustering: (face_id, file_id, embedding_bytes)
+/// Get slim face data for clustering: (face_id, file_id, embedding_bytes)
     /// Avoids loading full Face structs (bbox JSON, person_id, created_at) to reduce memory
     pub fn get_all_for_clustering() -> Result<Vec<(i64, i64, Option<Vec<u8>>)>, String> {
         let conn = open_conn()?;
@@ -13833,6 +13852,24 @@ mod fts_hook_tests {
         Face::assign_to_person_with_conn(&conn, 1, 1).unwrap();
 
         assert_eq!(found(&conn, "小明"), vec![file_id]);
+    }
+
+    #[test]
+    fn the_automatic_names_of_unnamed_people_stay_out_of_the_search() {
+        let conn = fixture();
+        let file_id = insert_file(&conn, "photo.jpg");
+        conn.execute("INSERT INTO persons(id, name) VALUES (1, 'Person 12')", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO faces(id, file_id, person_id) VALUES (1, ?1, 1)",
+            params![file_id],
+        )
+        .unwrap();
+
+        crate::t_fts::upsert_doc(&conn, file_id).unwrap();
+
+        assert!(found(&conn, "Person 12").is_empty());
+        assert!(found(&conn, "Person").is_empty());
     }
 
     #[test]

@@ -28,14 +28,11 @@ pub struct PersonMergeResult {
 }
 
 /// Whether a name is one the user typed, or one the clustering made up.
+///
+/// The rule itself lives with the people in `t_sqlite`, so the prompt, the
+/// search index and this module cannot drift apart.
 pub(crate) fn is_user_given_name(name: Option<&str>) -> bool {
-    match name {
-        None => false,
-        Some(name) => {
-            let trimmed = name.trim();
-            !trimmed.is_empty() && !trimmed.to_lowercase().starts_with("person ")
-        }
-    }
+    !Person::is_automatic_name(name)
 }
 
 /// The people a link can point at: the ones the user named.

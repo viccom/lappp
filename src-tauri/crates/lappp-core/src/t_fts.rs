@@ -565,7 +565,13 @@ fn people_of(conn: &Connection, file_id: i64) -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())?;
     let mut names = Vec::new();
     for row in rows {
-        names.push(row.map_err(|e| e.to_string())?);
+        let name = row.map_err(|e| e.to_string())?;
+        // The automatic names of unnamed groups are about nobody and do not
+        // belong in the search index.
+        if crate::t_sqlite::Person::is_automatic_name(Some(name.as_str())) {
+            continue;
+        }
+        names.push(name);
     }
     names.sort();
     Ok(names)
