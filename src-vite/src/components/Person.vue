@@ -441,7 +441,7 @@ const getMoreMenuItems = () => [
     // The graph has a page of its own; this opens it on this person.
     label: localeMsg.value.menu?.person?.open_graph || 'Open the family graph',
     icon: IconLink,
-    action: () => openHouseholdWindow(selectedPerson.value?.id ?? null),
+    action: () => openHouseholdWindow(selectedPerson.value?.id ?? null, t('household.title')),
   },
   { label: "-", action: null },
   {

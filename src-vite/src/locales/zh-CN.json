@@ -2286,6 +2286,20 @@
       "colleague": "同事",
       "neighbour": "邻居",
       "partner": "恋人"
-    }
+    },
+    "no_graph_yet": "还没有家庭图谱",
+    "no_graph_hint": "图谱就是：选一位根人物，把他和家人的关系连起来。之后描述照片时，会用上他们的姓名、关系和年龄。",
+    "create_title": "新建家庭图谱",
+    "create_confirm": "新建",
+    "name": "名称",
+    "name_hint": "例如：根人物的姓 + 家",
+    "name_suffix": "家",
+    "root_choice": "根人物",
+    "choose_one": "请选择",
+    "members_choice": "加入图谱的人",
+    "albums": "适用于这些相册",
+    "albums_hint": "只有这些相册里的照片才会带上这张卡。",
+    "no_named_faces": "还没有命名过的人，先去人物面板命名。",
+    "no_albums": "还没有相册。"
   }
 }

@@ -2268,6 +2268,20 @@
       "colleague": "同事",
       "neighbour": "鄰居",
       "partner": "戀人"
-    }
+    },
+    "no_graph_yet": "還沒有家庭圖譜",
+    "no_graph_hint": "圖譜就是：選一位根人物，把他和家人的關係連起來。之後描述照片時，會用上他們的姓名、關係和年齡。",
+    "create_title": "新增家庭圖譜",
+    "create_confirm": "新增",
+    "name": "名称",
+    "name_hint": "例如：根人物的姓 + 家",
+    "name_suffix": "家",
+    "root_choice": "根人物",
+    "choose_one": "請選擇",
+    "members_choice": "加入圖譜的人",
+    "albums": "適用於這些相冊",
+    "albums_hint": "只有這些相冊裡的照片才會帶上這張卡。",
+    "no_named_faces": "還沒有命名過的人，先去人物面板命名。",
+    "no_albums": "還沒有相冊。"
   }
 }

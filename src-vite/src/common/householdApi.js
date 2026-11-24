@@ -13,6 +13,22 @@ export async function getHouseholdOverview() {
   }
 }
 
+/**
+ * The albums a graph can apply to: just the id and the name.
+ *
+ * The full album list costs a request per album for its flags, which this
+ * dialog does not need.
+ */
+export async function listAlbumChoices() {
+  try {
+    const albums = await invoke('get_all_albums', { refreshAccessibility: false });
+    return (albums ?? []).map((album) => ({ id: album.id, name: album.name }));
+  } catch (error) {
+    console.error('Failed to list the albums:', error);
+    return [];
+  }
+}
+
 export async function listFaceNamesForHousehold() {
   try {
     return (await invoke('list_face_names_for_household')) ?? null;

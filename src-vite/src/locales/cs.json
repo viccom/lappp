@@ -2258,6 +2258,20 @@
       "colleague": "colleague",
       "neighbour": "neighbour",
       "partner": "partner"
-    }
+    },
+    "no_graph_yet": "No family graph yet",
+    "no_graph_hint": "A graph is a name you give a root person, the family around them, and how they are related. The descriptions then use their names, relations and ages.",
+    "create_title": "New family graph",
+    "create_confirm": "Create",
+    "name": "Name",
+    "name_hint": "For example, the family of the root person",
+    "name_suffix": "家",
+    "root_choice": "Root person",
+    "choose_one": "Choose one",
+    "members_choice": "Who joins the graph",
+    "albums": "Albums it applies to",
+    "albums_hint": "The card is only sent for photos in these albums.",
+    "no_named_faces": "Nobody is named yet. Name some faces first.",
+    "no_albums": "No album yet."
   }
 }

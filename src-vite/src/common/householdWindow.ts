@@ -10,7 +10,7 @@ const LABEL = 'household';
  *
  * @param personId the person to select once the page is open
  */
-export async function openHouseholdWindow(personId?: number | null): Promise<void> {
+export async function openHouseholdWindow(personId?: number | null, title?: string): Promise<void> {
   const query = personId != null ? `?personId=${personId}` : '';
 
   // Browser: no second windows; the page is a route carrying the same query.
@@ -35,7 +35,7 @@ export async function openHouseholdWindow(personId?: number | null): Promise<voi
 
   const created = webviewWindow().create(LABEL, {
     url: `/household${query}`,
-    title: 'Family graph',
+    title: title || 'Family graph',
     width: 1100,
     height: 760,
     minWidth: 820,

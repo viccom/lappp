@@ -1,47 +1,58 @@
 <template>
   <div class="flex flex-col h-screen bg-base-100 text-base-content">
     <!-- top bar: which graph, its root, whether it feeds the model -->
-    <div class="flex items-center gap-2 px-3 h-11 shrink-0 border-b border-base-content/10">
-      <select
-        v-if="households.length > 1"
-        class="select select-xs select-ghost max-w-48 font-medium"
-        :value="currentIndex"
-        @change="currentIndex = Number(($event.target as HTMLSelectElement).value)"
-      >
-        <option v-for="(household, index) in households" :key="household.id" :value="index">
-          {{ household.name }}
-        </option>
-      </select>
-      <span v-else class="text-sm font-medium truncate">{{ current?.name || '' }}</span>
+    <div class="shrink-0 border-b border-base-content/10">
+      <div class="flex items-center gap-2 px-3 h-11 min-w-0">
+        <select
+          v-if="households.length > 1"
+          class="select select-xs select-ghost max-w-48 font-medium shrink-0"
+          :value="currentIndex"
+          @change="currentIndex = Number(($event.target as HTMLSelectElement).value)"
+        >
+          <option v-for="(household, index) in households" :key="household.id" :value="index">
+            {{ household.name }}
+          </option>
+        </select>
+        <span v-else class="text-sm font-medium truncate min-w-0">
+          {{ current?.name || t('household.title') }}
+        </span>
 
-      <span v-if="rootName" class="text-xs text-base-content/50 shrink-0">
-        {{ t('household.root') }}: {{ rootName }}
-      </span>
+        <span v-if="rootName" class="text-xs text-base-content/50 truncate min-w-0">
+          {{ t('household.root') }}: {{ rootName }}
+        </span>
 
-      <label class="ml-auto flex items-center gap-1.5 text-xs text-base-content/60 cursor-pointer shrink-0">
-        <input
-          type="checkbox"
-          class="toggle toggle-xs"
-          :checked="current?.enabled !== false"
-          @change="toggleEnabled(($event.target as HTMLInputElement).checked)"
+        <label
+          v-if="current"
+          class="ml-auto flex items-center gap-1.5 text-xs text-base-content/60 cursor-pointer shrink-0 whitespace-nowrap"
+        >
+          <input
+            type="checkbox"
+            class="toggle toggle-xs"
+            :checked="current.enabled !== false"
+            @change="toggleEnabled(($event.target as HTMLInputElement).checked)"
+          />
+          {{ t('household.used_for_vision') }}
+        </label>
+
+        <TButton
+          :text="t('settings.household.new')"
+          :buttonSize="'small'"
+          @click="openCreate"
         />
-        {{ t('household.used_for_vision') }}
-      </label>
-
-      <TButton
-        :text="t('household.preview_card')"
-        :buttonSize="'small'"
-        :disabled="!current || previewFileId === null"
-        @click="runPreview()"
-      />
-      <TButton
-        :text="t('settings.household.new')"
-        :buttonSize="'small'"
-        @click="emit('create')"
-      />
+      </div>
     </div>
 
-    <div class="flex flex-1 min-h-0">
+    <!-- no graph yet: one button, and what it is for -->
+    <div v-if="!households.length" class="flex-1 flex items-center justify-center p-8">
+      <div class="max-w-md flex flex-col items-center gap-3 text-center">
+        <IconPerson class="w-10 h-10 text-base-content/20" />
+        <div class="text-sm text-base-content/60">{{ t('household.no_graph_yet') }}</div>
+        <div class="text-xs text-base-content/40 leading-5">{{ t('household.no_graph_hint') }}</div>
+        <TButton :text="t('household.create_confirm')" @click="openCreate" />
+      </div>
+    </div>
+
+    <div v-else class="flex flex-1 min-h-0">
       <!-- left: the members, and the names that could still join -->
       <div class="w-56 shrink-0 border-r border-base-content/10 flex flex-col min-h-0">
         <div class="flex-1 overflow-y-auto px-1 py-1">
@@ -161,6 +172,72 @@
         </div>
       </div>
 
+    <!-- create a graph: a name, a root, who joins it, which albums it covers -->
+    <ModalDialog
+      v-if="showCreate"
+      :title="t('household.create_title')"
+      :width="440"
+      @cancel="showCreate = false"
+    >
+      <div class="flex flex-col gap-1.5 min-h-0">
+        <div class="text-xs text-base-content/50">{{ t('household.name') }}</div>
+        <input
+          v-model="draftName"
+          class="input input-sm w-full"
+          :placeholder="t('household.name_hint')"
+        />
+
+        <div class="text-xs text-base-content/50 mt-1">{{ t('household.root_choice') }}</div>
+        <select v-model="draftRoot" class="select select-sm w-full">
+          <option value="">{{ t('household.choose_one') }}</option>
+          <option v-for="entry in namedFaces" :key="entry.name" :value="entry.name">
+            {{ entry.name }}
+          </option>
+        </select>
+
+        <div class="text-xs text-base-content/50 mt-1">{{ t('household.members_choice') }}</div>
+        <div class="max-h-36 overflow-y-auto rounded-box border border-base-content/10 p-1">
+          <label
+            v-for="entry in namedFaces"
+            :key="entry.name"
+            class="flex items-center gap-2 text-sm px-1 py-0.5 cursor-pointer"
+          >
+            <input type="checkbox" class="checkbox checkbox-xs" :value="entry.name" v-model="draftMembers" />
+            <span class="truncate">{{ entry.name }}</span>
+          </label>
+          <div v-if="!namedFaces.length" class="px-1 py-2 text-xs text-base-content/40">
+            {{ t('household.no_named_faces') }}
+          </div>
+        </div>
+
+        <div class="text-xs text-base-content/50 mt-1">{{ t('household.albums') }}</div>
+        <div class="max-h-28 overflow-y-auto rounded-box border border-base-content/10 p-1">
+          <label
+            v-for="album in albumChoices"
+            :key="album.id"
+            class="flex items-center gap-2 text-sm px-1 py-0.5 cursor-pointer"
+          >
+            <input type="checkbox" class="checkbox checkbox-xs" :value="album.id" v-model="draftAlbums" />
+            <span class="truncate">{{ album.name }}</span>
+          </label>
+          <div v-if="!albumChoices.length" class="px-1 py-2 text-xs text-base-content/40">
+            {{ t('household.no_albums') }}
+          </div>
+        </div>
+        <div class="text-[11px] text-base-content/40 leading-4">{{ t('household.albums_hint') }}</div>
+
+        <div class="flex justify-end gap-2 mt-2">
+          <TButton :text="t('msgbox.cancel')" @click="showCreate = false" />
+          <TButton
+            :text="t('household.create_confirm')"
+            buttonClasses="btn-primary"
+            :disabled="!canCreate"
+            @click="submitCreate"
+          />
+        </div>
+      </div>
+    </ModalDialog>
+
       <div v-if="derivedTerms.length" class="mt-1 text-[11px] text-base-content/40 truncate">
         {{ t('household.derived') }}: {{ derivedTerms.join(' · ') }}
       </div>
@@ -175,16 +252,16 @@ import { IconPerson } from '@/common/icons';
 import SearchableSelect from '@/components/SearchableSelect.vue';
 import TButton from '@/components/TButton.vue';
 import { useHousehold } from '@/composables/useHousehold';
+import ModalDialog from '@/components/ModalDialog.vue';
 import {
+  createHousehold,
+  listAlbumChoices,
   importHouseholdNodes,
   setHouseholdEdges,
   setHouseholdMembers,
   updateHousehold,
-  previewHouseholdCard,
 } from '@/common/householdApi';
 import { edgeDraft, layoutGenerations, relationCandidates, unjoinedNames } from '@/common/householdLogic';
-
-const emit = defineEmits(['create']);
 
 const { t } = useI18n();
 const { overview, faceNames, reload, nameOf } = useHousehold();
@@ -194,9 +271,63 @@ const ROW_GAP = 110;
 const COLUMN_GAP = 130;
 
 const currentIndex = ref(0);
+
+// The dialog that creates a graph. Without one the page cannot be used at all,
+// so it lives here rather than behind a parent that may not listen.
+const showCreate = ref(false);
+const draftName = ref('');
+const draftRoot = ref('');
+const draftMembers = ref<string[]>([]);
+const draftAlbums = ref<number[]>([]);
+const albumChoices = ref<Array<{ id: number; name: string }>>([]);
+
+/** The names a graph can be built from: the ones the user gave the faces. */
+const namedFaces = computed(() => faceNames.value);
+
+const canCreate = computed(
+  () => Boolean(draftRoot.value) && draftName.value.trim().length > 0,
+);
+
+async function openCreate() {
+  draftName.value = '';
+  draftRoot.value = '';
+  draftMembers.value = namedFaces.value.map((entry: any) => entry.name);
+  draftAlbums.value = albumChoices.value.map((album) => album.id);
+  showCreate.value = true;
+  if (!albumChoices.value.length) {
+    albumChoices.value = await listAlbumChoices();
+    if (!draftAlbums.value.length) {
+      draftAlbums.value = albumChoices.value.map((album) => album.id);
+    }
+  }
+}
+
+// The name follows the root until the user types one.
+watch(draftRoot, (root) => {
+  if (root && (!draftName.value || draftName.value.endsWith('家'))) {
+    draftName.value = `${root}${t('household.name_suffix')}`;
+  }
+});
+
+async function submitCreate() {
+  if (!canCreate.value) return;
+  const members = new Set(draftMembers.value);
+  // The root belongs to the graph whether or not it was ticked.
+  members.add(draftRoot.value);
+  const created = await createHousehold(
+    draftName.value.trim(),
+    draftAlbums.value,
+    draftRoot.value,
+    [...members],
+  );
+  if (created === null) return;
+  showCreate.value = false;
+  await reload();
+  const index = households.value.findIndex((household: any) => household.id === created);
+  currentIndex.value = index >= 0 ? index : 0;
+  selectedNodeId.value = null;
+}
 const selectedNodeId = ref<number | null>(null);
-const previewFileId = ref<number | null>(null);
-const previewText = ref<string | null>(null);
 
 const households = computed<any[]>(() => overview.value?.households ?? []);
 const current = computed<any>(() => households.value[currentIndex.value] ?? null);
@@ -391,11 +522,6 @@ async function toggleEnabled(value: boolean) {
   if (!current.value) return;
   await updateHousehold(current.value.id, { enabled: value });
   await reload();
-}
-
-async function runPreview() {
-  if (previewFileId.value === null) return;
-  previewText.value = await previewHouseholdCard(previewFileId.value);
 }
 
 // ---- moving the canvas ----

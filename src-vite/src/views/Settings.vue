@@ -1395,7 +1395,7 @@ async function setHouseholdEnabled(householdId: number, enabled: boolean) {
 }
 
 function openHouseholdFromSettings() {
-  void openHouseholdWindow(null);
+  void openHouseholdWindow(null, t('household.title'));
 }
 
 async function openVlLab() {
