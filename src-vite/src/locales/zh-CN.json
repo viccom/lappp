@@ -843,6 +843,12 @@
       "clear_history": "清空搜索历史"
     },
     "person": {
+      "rename": "重命名",
+      "delete": "删除",
+      "merge": "关联到已有名字…",
+      "merge_selected": "关联到已有名字",
+      "undo_merge": "撤销上次关联",
+      "selected": "已选 {count} 个人物",
       "index_faces": "索引人脸",
       "reset_index": "重置索引",
       "unnamed": "未命名人物",
@@ -895,6 +901,16 @@
       "title": "删除人物",
       "content": "确定要删除 '{person}' 吗？",
       "ok": "删除"
+    },
+    "merge_person": {
+      "title": "关联到已有名字",
+      "search": "搜索名字",
+      "empty": "还没有别的已命名人物，先给一个人物起名字",
+      "confirm": "把 {count} 个人物（共 {faces} 张脸）关联到「{name}」？可以在人物面板菜单里撤销。",
+      "done": "已把 {count} 个人物关联到「{name}」"
+    },
+    "undo_merge": {
+      "content": "把上次关联过去的那批脸拆回一个单独的未命名人物？"
     },
     "drop_import": {
       "title": "无法导入文件",

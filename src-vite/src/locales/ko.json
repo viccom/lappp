@@ -828,6 +828,12 @@
       "clear_history": "검색 기록 지우기"
     },
     "person": {
+      "rename": "Rename",
+      "delete": "Delete",
+      "merge": "Link to an existing name…",
+      "merge_selected": "Link to an existing name",
+      "undo_merge": "Undo last link",
+      "selected": "{count} selected",
       "index_faces": "얼굴 인덱싱",
       "reset_index": "인덱스 초기화",
       "unnamed": "이름 없는 인물",
@@ -880,6 +886,16 @@
       "title": "인물 삭제",
       "content": "'{person}' 님을 삭제하시겠습니까?",
       "ok": "삭제"
+    },
+    "merge_person": {
+      "title": "Link to an existing name",
+      "search": "Search names",
+      "empty": "No other named person yet. Name one first.",
+      "confirm": "Link {count} person(s) with {faces} face(s) to '{name}'? You can undo this from the people panel menu.",
+      "done": "Linked {count} person(s) to '{name}'"
+    },
+    "undo_merge": {
+      "content": "Move the faces linked last time back into a separate, unnamed person?"
     },
     "drop_import": {
       "title": "파일을 가져올 수 없습니다",

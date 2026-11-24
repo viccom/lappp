@@ -843,6 +843,12 @@
       "clear_history": "清除搜尋紀錄"
     },
     "person": {
+      "rename": "重新命名",
+      "delete": "刪除",
+      "merge": "連結到已有名字…",
+      "merge_selected": "連結到已有名字",
+      "undo_merge": "復原上次連結",
+      "selected": "已選 {count} 個人物",
       "index_faces": "建立人臉索引",
       "reset_index": "重設索引",
       "unnamed": "未命名人物",
@@ -895,6 +901,16 @@
       "title": "刪除人物",
       "content": "確定要刪除「{person}」嗎？",
       "ok": "刪除"
+    },
+    "merge_person": {
+      "title": "連結到已有名字",
+      "search": "搜尋名字",
+      "empty": "還沒有別的已命名人物，先替一個人物取名字",
+      "confirm": "要把 {count} 個人物（共 {faces} 張臉）連結到「{name}」嗎？可以在人物面板選單中復原。",
+      "done": "已把 {count} 個人物連結到「{name}」"
+    },
+    "undo_merge": {
+      "content": "要把上次連結過去的那批臉拆回一個單獨的未命名人物嗎？"
     },
     "drop_import": {
       "title": "無法匯入檔案",

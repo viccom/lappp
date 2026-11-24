@@ -843,6 +843,12 @@
       "clear_history": "検索履歴を消去"
     },
     "person": {
+      "rename": "Rename",
+      "delete": "Delete",
+      "merge": "Link to an existing name…",
+      "merge_selected": "Link to an existing name",
+      "undo_merge": "Undo last link",
+      "selected": "{count} selected",
       "index_faces": "顔をインデックス",
       "reset_index": "インデックスをリセット",
       "unnamed": "名前のない人物",
@@ -895,6 +901,16 @@
       "title": "人物を削除",
       "content": "'{person}' を削除してもよろしいですか？",
       "ok": "削除"
+    },
+    "merge_person": {
+      "title": "Link to an existing name",
+      "search": "Search names",
+      "empty": "No other named person yet. Name one first.",
+      "confirm": "Link {count} person(s) with {faces} face(s) to '{name}'? You can undo this from the people panel menu.",
+      "done": "Linked {count} person(s) to '{name}'"
+    },
+    "undo_merge": {
+      "content": "Move the faces linked last time back into a separate, unnamed person?"
     },
     "drop_import": {
       "title": "インポートできません",

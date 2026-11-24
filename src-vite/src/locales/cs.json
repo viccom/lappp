@@ -843,6 +843,12 @@
       "clear_history": "Vymazat historii hledání"
     },
     "person": {
+      "rename": "Rename",
+      "delete": "Delete",
+      "merge": "Link to an existing name…",
+      "merge_selected": "Link to an existing name",
+      "undo_merge": "Undo last link",
+      "selected": "{count} selected",
       "index_faces": "Indexovat tváře",
       "reset_index": "Resetovat index",
       "unnamed": "Nepojmenovaná osoba",
@@ -895,6 +901,16 @@
       "title": "Odstranit osobu",
       "content": "Opravdu chcete odstranit osobu „{person}“?",
       "ok": "Odstranit"
+    },
+    "merge_person": {
+      "title": "Link to an existing name",
+      "search": "Search names",
+      "empty": "No other named person yet. Name one first.",
+      "confirm": "Link {count} person(s) with {faces} face(s) to '{name}'? You can undo this from the people panel menu.",
+      "done": "Linked {count} person(s) to '{name}'"
+    },
+    "undo_merge": {
+      "content": "Move the faces linked last time back into a separate, unnamed person?"
     },
     "drop_import": {
       "title": "Nelze importovat soubory",
