@@ -25,9 +25,9 @@
 
 ## 2. 统计
 
-- 命令总数：**260**
-- 拆分分类：A 纯内核 **239** · B 需适配 **5** · C 原生专属 **16**
-- 暴露等级：只读 **114** · 写入 **90** · 管理员 **38** · 不暴露 **18**
+- 命令总数：**271**
+- 拆分分类：A 纯内核 **250** · B 需适配 **5** · C 原生专属 **16**
+- 暴露等级：只读 **117** · 写入 **98** · 管理员 **38** · 不暴露 **18**
 
 ## 3. 清单（按注册表分组）
 
@@ -321,7 +321,7 @@
 | 2 | `t_embed::rebuild_caption_embeds` | A 纯内核 | 管理员 |  |
 | 3 | `t_embed::search_captions` | A 纯内核 | 只读 |  |
 
-### 人物（人脸）（15）
+### 人物（人脸）（12）
 
 | # | 命令 | 拆分分类 | 暴露 | 注入/备注 |
 |---:|---|---|---|---|
@@ -337,9 +337,25 @@
 | 10 | `t_cmds::list_person_targets` | A 纯内核 | 只读 |  |
 | 11 | `t_cmds::merge_persons` | A 纯内核 | 写入 |  |
 | 12 | `t_cmds::move_faces_to_new_person` | A 纯内核 | 写入 |  |
-| 13 | `t_cmds::get_faces_for_file` | A 纯内核 | 只读 |  |
-| 14 | `t_af_area::get_af_areas` | A 纯内核 | 只读 |  |
-| 15 | `t_cmds::get_person_thumbnail` | A 纯内核 | 只读 |  |
+
+### 家庭图谱（14）
+
+| # | 命令 | 拆分分类 | 暴露 | 注入/备注 |
+|---:|---|---|---|---|
+| 1 | `t_cmds::get_household_overview` | A 纯内核 | 只读 |  |
+| 2 | `t_cmds::list_face_names_for_household` | A 纯内核 | 只读 |  |
+| 3 | `t_cmds::preview_household_card` | A 纯内核 | 只读 |  |
+| 4 | `t_cmds::create_household` | A 纯内核 | 写入 |  |
+| 5 | `t_cmds::update_household` | A 纯内核 | 写入 |  |
+| 6 | `t_cmds::delete_household` | A 纯内核 | 写入 |  |
+| 7 | `t_cmds::import_household_nodes` | A 纯内核 | 写入 |  |
+| 8 | `t_cmds::upsert_household_node` | A 纯内核 | 写入 |  |
+| 9 | `t_cmds::delete_household_node` | A 纯内核 | 写入 |  |
+| 10 | `t_cmds::set_household_members` | A 纯内核 | 写入 |  |
+| 11 | `t_cmds::set_household_edges` | A 纯内核 | 写入 |  |
+| 12 | `t_cmds::get_faces_for_file` | A 纯内核 | 只读 |  |
+| 13 | `t_af_area::get_af_areas` | A 纯内核 | 只读 |  |
+| 14 | `t_cmds::get_person_thumbnail` | A 纯内核 | 只读 |  |
 
 ### 去重 / 相似（17）
 

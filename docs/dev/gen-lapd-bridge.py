@@ -57,6 +57,8 @@ TYPE_IMPORTS = {
     "LibraryState": "lappp_core::t_config::LibraryState",
     "MontageParams": "lappp_core::t_montage::MontageParams",
     "PathBuf": "std::path::PathBuf",
+    "HouseholdEdge": "lappp_core::t_household::HouseholdEdge",
+    "HouseholdNode": "lappp_core::t_household::HouseholdNode",
     "PersonPageRequest": "lappp_core::t_sqlite::PersonPageRequest",
     "QueryParams": "lappp_core::t_sqlite::QueryParams",
     "RawDisplayOptions": "lappp_core::t_raw_display::RawDisplayOptions",

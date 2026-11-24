@@ -4505,6 +4505,115 @@ pub fn merge_persons(
         .map_err(|e| format!("Error while linking people: {}", e))
 }
 
+// ----------------------------------------------------------------------------
+// The household graph
+// ----------------------------------------------------------------------------
+
+/// The graphs of the library, with their objects and links. `null` when the
+/// library has no graphs at all.
+pub fn get_household_overview() -> Result<Option<crate::t_household::HouseholdOverview>, String> {
+    let conn = crate::t_sqlite::open_conn()?;
+    crate::t_household::overview_with_conn(&conn)
+        .map_err(|e| format!("Error while reading the household graphs: {}", e))
+}
+
+/// The names of faces that could join a graph.
+pub fn list_face_names_for_household() -> Result<Vec<crate::t_household::FaceNameForGraph>, String> {
+    let conn = crate::t_sqlite::open_conn()?;
+    crate::t_household::face_names_with_conn(&conn)
+        .map_err(|e| format!("Error while listing the names of faces: {}", e))
+}
+
+/// The card the model would see for a photo, or `null` when there is none.
+pub fn preview_household_card(file_id: i64) -> Result<Option<String>, String> {
+    let conn = crate::t_sqlite::open_conn()?;
+    crate::t_household::card_for_file(&conn, file_id)
+        .map_err(|e| format!("Error while building the card: {}", e))
+}
+
+/// Create a graph: its members, its root and the albums it applies to.
+pub fn create_household(
+    name: String,
+    album_ids: Vec<i64>,
+    root_node_name: String,
+    import_names: Vec<String>,
+) -> Result<i64, String> {
+    let mut conn = crate::t_sqlite::open_conn()?;
+    crate::t_household::create_household_with_conn(
+        &mut conn,
+        &name,
+        &album_ids,
+        &root_node_name,
+        &import_names,
+    )
+    .map_err(|e| format!("Error while creating the graph: {}", e))
+}
+
+/// Change a graph.
+pub fn update_household(
+    household_id: i64,
+    name: Option<String>,
+    enabled: Option<bool>,
+    album_ids: Option<Vec<i64>>,
+    root_node_id: Option<i64>,
+) -> Result<(), String> {
+    let mut conn = crate::t_sqlite::open_conn()?;
+    crate::t_household::update_household_with_conn(
+        &mut conn,
+        household_id,
+        name.as_deref(),
+        enabled,
+        album_ids.as_deref(),
+        root_node_id,
+    )
+    .map_err(|e| format!("Error while changing the graph: {}", e))
+}
+
+/// Delete a graph. The objects and the links stay.
+pub fn delete_household(household_id: i64) -> Result<bool, String> {
+    let mut conn = crate::t_sqlite::open_conn()?;
+    crate::t_household::delete_household_with_conn(&mut conn, household_id)
+        .map_err(|e| format!("Error while deleting the graph: {}", e))
+}
+
+/// Bring names of faces into the library as objects.
+pub fn import_household_nodes(person_names: Vec<String>) -> Result<Vec<i64>, String> {
+    let conn = crate::t_sqlite::open_conn()?;
+    crate::t_household::import_names_with_conn(&conn, &person_names)
+        .map_err(|e| format!("Error while importing the names: {}", e))
+}
+
+/// Write one object, with its anchors.
+pub fn upsert_household_node(node: crate::t_household::HouseholdNode) -> Result<i64, String> {
+    let conn = crate::t_sqlite::open_conn()?;
+    crate::t_household::upsert_node_with_conn(&conn, &node)
+        .map_err(|e| format!("Error while writing the object: {}", e))
+}
+
+/// Delete an object. The root of a graph cannot be deleted.
+pub fn delete_household_node(node_id: i64) -> Result<bool, String> {
+    let conn = crate::t_sqlite::open_conn()?;
+    crate::t_household::delete_node_with_conn(&conn, node_id)
+        .map_err(|e| format!("Error while deleting the object: {}", e))
+}
+
+/// The members of a graph, replaced as a whole.
+pub fn set_household_members(household_id: i64, node_ids: Vec<i64>) -> Result<(), String> {
+    let conn = crate::t_sqlite::open_conn()?;
+    crate::t_household::set_members_with_conn(&conn, household_id, &node_ids)
+        .map_err(|e| format!("Error while writing the members: {}", e))
+}
+
+/// The links of a graph, replaced as a whole.
+pub fn set_household_edges(
+    household_id: i64,
+    edges: Vec<crate::t_household::HouseholdEdge>,
+) -> Result<(), String> {
+    let conn = crate::t_sqlite::open_conn()?;
+    crate::t_household::set_edges_with_conn(&conn, household_id, &edges)
+        .map_err(|e| format!("Error while writing the links: {}", e))
+}
+
 /// Move faces into a person of their own, without a name: this undoes a link.
 pub fn move_faces_to_new_person(face_ids: Vec<i64>) -> Result<i64, String> {
     let mut conn = crate::t_sqlite::open_conn()?;

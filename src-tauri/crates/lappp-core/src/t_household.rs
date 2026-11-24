@@ -281,7 +281,8 @@ pub fn normalise_ends(relation: &RelationType, from_node: i64, to_node: i64) -> 
 }
 
 /// One object of the graph.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HouseholdNode {
     /// None for a new object.
     pub id: Option<i64>,
@@ -318,7 +319,8 @@ impl Default for HouseholdNode {
 }
 
 /// One link between two objects.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HouseholdEdge {
     pub kind: String,
     pub from_node: i64,
@@ -460,6 +462,288 @@ pub struct CardData {
 
 /// The line the card starts with. It tells the model what it may lean on.
 pub const CARD_HEADER: &str = "人物档案（用户整理的关系图谱，可信；只用于画面里已被人脸标注认出的人。图里没有标出关系的人，不要给他编一个关系，也不要当成这个家庭的成员）：";
+
+// ----------------------------------------------------------------------------
+// What the interface reads
+// ----------------------------------------------------------------------------
+
+/// One graph, as the interface shows it.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HouseholdSummary {
+    pub id: i64,
+    pub name: String,
+    pub enabled: bool,
+    pub root_node_id: Option<i64>,
+    pub album_ids: Vec<i64>,
+    pub member_ids: Vec<i64>,
+}
+
+/// One object, as the interface shows it.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeSummary {
+    pub id: i64,
+    pub kind: String,
+    pub display_name: Option<String>,
+    pub gender: String,
+    pub birth_date: Option<String>,
+    pub birth_place: Option<String>,
+    pub notes: Option<String>,
+    pub share_age: bool,
+    pub share_details: bool,
+    /// The names of the faces that belong to this object.
+    pub anchors: Vec<String>,
+    /// What this person is to the root of the graph they are shown in.
+    pub term: Option<String>,
+}
+
+/// One link, as the interface shows it.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EdgeSummary {
+    pub kind: String,
+    pub from_node: i64,
+    pub to_node: i64,
+    pub label: Option<String>,
+    pub term_override: Option<String>,
+    pub valid_from: Option<i64>,
+    pub valid_to: Option<i64>,
+    pub source: String,
+}
+
+/// Everything the interface shows about the graphs of a library.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HouseholdOverview {
+    pub households: Vec<HouseholdSummary>,
+    pub nodes: Vec<NodeSummary>,
+    pub edges: Vec<EdgeSummary>,
+}
+
+/// A name of a face that could join a graph.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaceNameForGraph {
+    pub name: String,
+    /// How many faces carry the name.
+    pub count: i64,
+    /// Whether an object of the graph already stands for this name.
+    pub imported: bool,
+}
+
+/// The graphs of a library. `None` when the library has no graphs at all.
+pub fn overview_with_conn(conn: &Connection) -> Result<Option<HouseholdOverview>, String> {
+    if !tables_present(conn)? {
+        return Ok(None);
+    }
+
+    // The graphs, with their albums and members.
+    let mut households: Vec<HouseholdSummary> = Vec::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, enabled, root_node_id FROM households ORDER BY name COLLATE NOCASE",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(HouseholdSummary {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    enabled: row.get::<_, i64>(2)? != 0,
+                    root_node_id: row.get(3)?,
+                    album_ids: Vec::new(),
+                    member_ids: Vec::new(),
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            households.push(row.map_err(|e| e.to_string())?);
+        }
+    }
+    for household in &mut households {
+        household.album_ids = ids_of(
+            conn,
+            "SELECT album_id FROM household_albums WHERE household_id = ?1",
+            household.id,
+        )?;
+        household.member_ids = ids_of(
+            conn,
+            "SELECT node_id FROM household_members WHERE household_id = ?1",
+            household.id,
+        )?;
+    }
+
+    // The objects, with their anchors.
+    let mut nodes: Vec<NodeSummary> = Vec::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, kind, display_name, gender, birth_date, birth_place, notes,
+                        share_age, share_details
+                 FROM household_nodes ORDER BY id",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(NodeSummary {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    display_name: row.get(2)?,
+                    gender: row.get(3)?,
+                    birth_date: row.get(4)?,
+                    birth_place: row.get(5)?,
+                    notes: row.get(6)?,
+                    share_age: row.get::<_, i64>(7)? != 0,
+                    share_details: row.get::<_, i64>(8)? != 0,
+                    anchors: Vec::new(),
+                    term: None,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            nodes.push(row.map_err(|e| e.to_string())?);
+        }
+    }
+    for node in &mut nodes {
+        let mut stmt = conn
+            .prepare(
+                "SELECT value FROM household_node_anchors
+                 WHERE node_id = ?1 AND kind = 'face_name' ORDER BY value",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![node.id], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            node.anchors.push(row.map_err(|e| e.to_string())?);
+        }
+    }
+
+    // The links.
+    let mut edges: Vec<EdgeSummary> = Vec::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT kind, from_node, to_node, label, term_override, valid_from, valid_to, source
+                 FROM household_edges ORDER BY id",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(EdgeSummary {
+                    kind: row.get(0)?,
+                    from_node: row.get(1)?,
+                    to_node: row.get(2)?,
+                    label: row.get(3)?,
+                    term_override: row.get(4)?,
+                    valid_from: row.get(5)?,
+                    valid_to: row.get(6)?,
+                    source: row.get(7)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            edges.push(row.map_err(|e| e.to_string())?);
+        }
+    }
+
+    // What each person is to the root of the graph that shows them.
+    let derivation_nodes: Vec<DerivationNode> = nodes
+        .iter()
+        .map(|node| DerivationNode {
+            id: node.id,
+            gender: node.gender.clone(),
+            birth_year: birth_year_of(node.birth_date.as_deref()),
+        })
+        .collect();
+    let derivation_edges: Vec<DerivationEdge> = edges
+        .iter()
+        .map(|edge| DerivationEdge {
+            kind: edge.kind.clone(),
+            from_node: edge.from_node,
+            to_node: edge.to_node,
+            label: edge.label.clone(),
+            term_override: edge.term_override.clone(),
+            valid_from: edge.valid_from,
+            valid_to: edge.valid_to,
+            source: edge.source.clone(),
+        })
+        .collect();
+    // Without a photo there is no year to judge the links by.
+    let derivation = Derivation::new(&derivation_nodes, &derivation_edges, None);
+    for node in &mut nodes {
+        let root = households
+            .iter()
+            .find(|household| household.member_ids.contains(&node.id))
+            .and_then(|household| household.root_node_id);
+        node.term = match root {
+            Some(root) if root != node.id => {
+                derivation.term(node.id, root).map(|relation| relation.term)
+            }
+            _ => None,
+        };
+    }
+
+    Ok(Some(HouseholdOverview {
+        households,
+        nodes,
+        edges,
+    }))
+}
+
+/// The ids a query returns for one id.
+fn ids_of(conn: &Connection, sql: &str, id: i64) -> Result<Vec<i64>, String> {
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![id], |row| row.get::<_, i64>(0))
+        .map_err(|e| e.to_string())?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(ids)
+}
+
+/// The names of faces that could join a graph, with the ones already there marked.
+pub fn face_names_with_conn(conn: &Connection) -> Result<Vec<FaceNameForGraph>, String> {
+    let mut names: Vec<FaceNameForGraph> = Vec::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT p.name, COUNT(f.id) FROM persons p
+                 JOIN faces f ON f.person_id = p.id
+                 WHERE p.name IS NOT NULL AND TRIM(p.name) <> ''
+                 GROUP BY p.name ORDER BY p.name COLLATE NOCASE",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            let (name, count) = row.map_err(|e| e.to_string())?;
+            // The names the clustering made up stand for nobody.
+            if crate::t_sqlite::Person::is_automatic_name(Some(name.as_str())) {
+                continue;
+            }
+            names.push(FaceNameForGraph {
+                name,
+                count,
+                imported: false,
+            });
+        }
+    }
+    if names.is_empty() || !tables_present(conn)? {
+        return Ok(names);
+    }
+    for name in &mut names {
+        name.imported = anchor_owner(conn, &name.name)?.is_some();
+    }
+    Ok(names)
+}
 
 /// The card of a photo: the people in it and the relations between them.
 ///
@@ -2844,6 +3128,166 @@ mod tests {
         assert_eq!(birth_year_of(Some("2011-05-07")), Some(2011));
         assert_eq!(birth_year_of(Some("")), None);
         assert_eq!(birth_year_of(None), None);
+    }
+
+    // ---- what the interface reads ----
+
+    #[test]
+    fn a_library_without_the_tables_has_no_overview() {
+        let conn = Connection::open_in_memory().unwrap();
+        assert!(overview_with_conn(&conn).unwrap().is_none());
+    }
+
+    #[test]
+    fn the_overview_lists_the_graphs_the_objects_and_the_links() {
+        let mut conn = graph();
+        let father = person_with(&conn, "小明", "male");
+        let child = person_with(&conn, "小小", "male");
+        let household = create_household_with_conn(
+            &mut conn,
+            "某某家",
+            &[1],
+            "小明",
+            &["小明".to_string(), "小小".to_string()],
+        )
+        .unwrap();
+        set_edges_with_conn(&conn, household, &[link("parent", father, child, None)]).unwrap();
+
+        let overview = overview_with_conn(&conn).unwrap().expect("no overview");
+
+        assert_eq!(overview.households.len(), 1);
+        let graph_summary = &overview.households[0];
+        assert_eq!(graph_summary.name, "某某家");
+        assert!(graph_summary.enabled);
+        assert_eq!(graph_summary.root_node_id, Some(father));
+        assert_eq!(graph_summary.album_ids, vec![1]);
+        assert_eq!(graph_summary.member_ids.len(), 2);
+
+        assert_eq!(overview.nodes.len(), 2);
+        assert_eq!(overview.edges.len(), 1);
+        assert_eq!(overview.edges[0].kind, "parent");
+        assert_eq!(overview.edges[0].from_node, father);
+        assert_eq!(overview.edges[0].to_node, child);
+        assert_eq!(overview.edges[0].source, "user");
+    }
+
+    #[test]
+    fn the_overview_says_what_each_person_is_to_the_root() {
+        let mut conn = graph();
+        let father = person_with(&conn, "小明", "male");
+        let child = person_with(&conn, "小小", "male");
+        let household = create_household_with_conn(
+            &mut conn,
+            "某某家",
+            &[1],
+            "小明",
+            &["小明".to_string(), "小小".to_string()],
+        )
+        .unwrap();
+        set_edges_with_conn(&conn, household, &[link("parent", father, child, None)]).unwrap();
+
+        let overview = overview_with_conn(&conn).unwrap().expect("no overview");
+
+        let term_of = |id: i64| {
+            overview
+                .nodes
+                .iter()
+                .find(|node| node.id == id)
+                .and_then(|node| node.term.clone())
+        };
+        // The root has no term: it is the one the words are relative to.
+        assert_eq!(term_of(father), None);
+        assert_eq!(term_of(child).as_deref(), Some("儿子"));
+    }
+
+    #[test]
+    fn the_overview_carries_the_anchors_of_an_object() {
+        let mut conn = graph();
+        let node = HouseholdNode {
+            display_name: Some("小明".to_string()),
+            anchors: vec!["小明".to_string(), "明明".to_string()],
+            ..Default::default()
+        };
+        let id = upsert_node_with_conn(&conn, &node).unwrap();
+        create_household_with_conn(&mut conn, "某某家", &[1], "小明", &["小明".to_string()])
+            .unwrap();
+
+        let overview = overview_with_conn(&conn).unwrap().expect("no overview");
+
+        let summary = overview.nodes.iter().find(|node| node.id == id).unwrap();
+        assert_eq!(summary.anchors.len(), 2);
+        assert!(summary.anchors.contains(&"明明".to_string()));
+    }
+
+    #[test]
+    fn the_face_names_leave_out_the_ones_the_clustering_made_up() {
+        let conn = graph();
+        conn.execute_batch(
+            "CREATE TABLE persons(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+             CREATE TABLE faces(id INTEGER PRIMARY KEY AUTOINCREMENT, file_id INTEGER, person_id INTEGER);
+             INSERT INTO persons(name) VALUES('小明'),('Person 3'),(NULL),('小红');
+             INSERT INTO faces(file_id, person_id) VALUES(1,1),(2,1),(3,2),(4,4);",
+        )
+        .unwrap();
+
+        let names = face_names_with_conn(&conn).unwrap();
+
+        let listed: Vec<(String, i64)> = names
+            .iter()
+            .map(|name| (name.name.clone(), name.count))
+            .collect();
+        assert_eq!(
+            listed,
+            vec![("小明".to_string(), 2), ("小红".to_string(), 1)]
+        );
+        assert!(names.iter().all(|name| !name.imported));
+    }
+
+    #[test]
+    fn the_face_names_mark_the_ones_a_graph_already_has() {
+        let conn = graph();
+        conn.execute_batch(
+            "CREATE TABLE persons(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+             CREATE TABLE faces(id INTEGER PRIMARY KEY AUTOINCREMENT, file_id INTEGER, person_id INTEGER);
+             INSERT INTO persons(name) VALUES('小明'),('小红');
+             INSERT INTO faces(file_id, person_id) VALUES(1,1),(2,2);",
+        )
+        .unwrap();
+        person(&conn, "小明");
+
+        let names = face_names_with_conn(&conn).unwrap();
+
+        assert!(
+            names
+                .iter()
+                .find(|name| name.name == "小明")
+                .unwrap()
+                .imported
+        );
+        assert!(
+            !names
+                .iter()
+                .find(|name| name.name == "小红")
+                .unwrap()
+                .imported
+        );
+    }
+
+    #[test]
+    fn the_face_names_work_in_a_library_without_the_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE persons(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+             CREATE TABLE faces(id INTEGER PRIMARY KEY AUTOINCREMENT, file_id INTEGER, person_id INTEGER);
+             INSERT INTO persons(name) VALUES('小明');
+             INSERT INTO faces(file_id, person_id) VALUES(1,1);",
+        )
+        .unwrap();
+
+        let names = face_names_with_conn(&conn).unwrap();
+
+        assert_eq!(names.len(), 1);
+        assert!(!names[0].imported);
     }
 
     // ---- the card ----

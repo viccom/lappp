@@ -2,7 +2,7 @@
 //!
 //! Regenerate after adding commands: `python -I docs/dev/gen-lapd-bridge.py`.
 //! Whitelist = class A commands with a network exposure level, in main.rs
-//! registration order: 237 bridged / 260 registered
+//! registration order: 248 bridged / 271 registered
 //! (23 skipped: B desktop-glue, C native-only, A 不暴露).
 use crate::bridge::{
     arg, arg_opt, ok, ok_res, spawn_sync, spawn_sync_plain, BridgeError,
@@ -213,6 +213,17 @@ pub const COMMANDS: &[&str] = &[
     "list_person_targets",
     "merge_persons",
     "move_faces_to_new_person",
+    "get_household_overview",
+    "list_face_names_for_household",
+    "preview_household_card",
+    "create_household",
+    "update_household",
+    "delete_household",
+    "import_household_nodes",
+    "upsert_household_node",
+    "delete_household_node",
+    "set_household_members",
+    "set_household_edges",
     "get_faces_for_file",
     "get_af_areas",
     "get_person_thumbnail",
@@ -456,6 +467,17 @@ pub const EXPOSURES: &[(&str, &str)] = &[
     ("list_person_targets", "read"),
     ("merge_persons", "write"),
     ("move_faces_to_new_person", "write"),
+    ("get_household_overview", "read"),
+    ("list_face_names_for_household", "read"),
+    ("preview_household_card", "read"),
+    ("create_household", "write"),
+    ("update_household", "write"),
+    ("delete_household", "write"),
+    ("import_household_nodes", "write"),
+    ("upsert_household_node", "write"),
+    ("delete_household_node", "write"),
+    ("set_household_members", "write"),
+    ("set_household_edges", "write"),
     ("get_faces_for_file", "read"),
     ("get_af_areas", "read"),
     ("get_person_thumbnail", "read"),
@@ -1570,6 +1592,68 @@ spawn_sync(move || lappp_core::t_cmds::merge_persons(person_ids, target_person_i
         "move_faces_to_new_person" => {
 let face_ids: Vec<i64> = arg(body, "faceIds")?;
 spawn_sync(move || lappp_core::t_cmds::move_faces_to_new_person(face_ids)).await
+        }
+        // t_cmds::get_household_overview [read]
+        "get_household_overview" => {
+spawn_sync(move || lappp_core::t_cmds::get_household_overview()).await
+        }
+        // t_cmds::list_face_names_for_household [read]
+        "list_face_names_for_household" => {
+spawn_sync(move || lappp_core::t_cmds::list_face_names_for_household()).await
+        }
+        // t_cmds::preview_household_card [read]
+        "preview_household_card" => {
+let file_id: i64 = arg(body, "fileId")?;
+spawn_sync(move || lappp_core::t_cmds::preview_household_card(file_id)).await
+        }
+        // t_cmds::create_household [write]
+        "create_household" => {
+let name: String = arg(body, "name")?;
+let album_ids: Vec<i64> = arg(body, "albumIds")?;
+let root_node_name: String = arg(body, "rootNodeName")?;
+let import_names: Vec<String> = arg(body, "importNames")?;
+spawn_sync(move || lappp_core::t_cmds::create_household(name, album_ids, root_node_name, import_names)).await
+        }
+        // t_cmds::update_household [write]
+        "update_household" => {
+let household_id: i64 = arg(body, "householdId")?;
+let name: Option<String> = arg_opt(body, "name")?;
+let enabled: Option<bool> = arg_opt(body, "enabled")?;
+let album_ids: Option<Vec<i64>> = arg_opt(body, "albumIds")?;
+let root_node_id: Option<i64> = arg_opt(body, "rootNodeId")?;
+spawn_sync(move || lappp_core::t_cmds::update_household(household_id, name, enabled, album_ids, root_node_id)).await
+        }
+        // t_cmds::delete_household [write]
+        "delete_household" => {
+let household_id: i64 = arg(body, "householdId")?;
+spawn_sync(move || lappp_core::t_cmds::delete_household(household_id)).await
+        }
+        // t_cmds::import_household_nodes [write]
+        "import_household_nodes" => {
+let person_names: Vec<String> = arg(body, "personNames")?;
+spawn_sync(move || lappp_core::t_cmds::import_household_nodes(person_names)).await
+        }
+        // t_cmds::upsert_household_node [write]
+        "upsert_household_node" => {
+let node: lappp_core::t_household::HouseholdNode = arg(body, "node")?;
+spawn_sync(move || lappp_core::t_cmds::upsert_household_node(node)).await
+        }
+        // t_cmds::delete_household_node [write]
+        "delete_household_node" => {
+let node_id: i64 = arg(body, "nodeId")?;
+spawn_sync(move || lappp_core::t_cmds::delete_household_node(node_id)).await
+        }
+        // t_cmds::set_household_members [write]
+        "set_household_members" => {
+let household_id: i64 = arg(body, "householdId")?;
+let node_ids: Vec<i64> = arg(body, "nodeIds")?;
+spawn_sync(move || lappp_core::t_cmds::set_household_members(household_id, node_ids)).await
+        }
+        // t_cmds::set_household_edges [write]
+        "set_household_edges" => {
+let household_id: i64 = arg(body, "householdId")?;
+let edges: Vec<lappp_core::t_household::HouseholdEdge> = arg(body, "edges")?;
+spawn_sync(move || lappp_core::t_cmds::set_household_edges(household_id, edges)).await
         }
         // t_cmds::get_faces_for_file [read]
         "get_faces_for_file" => {

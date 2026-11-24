@@ -37,9 +37,9 @@
 | 版本 | `0.4.0`（`src-tauri/Cargo.toml:4`、`src-vite/package.json:4`） |
 | DB schema | 迁移 **v33**（`crates/lappp-core/src/t_migration.rs` 的 `get_migrations()` 末尾；2026-11-24 更新）；上游 v23/v24 占位，fork 自有迁移重编号 v25–v30，v31 是 v0.4.0 同步的补偿迁移，v32 播种内置图片理解模板库，v33 让内置模板带上家庭档案卡（文字变了 → 以新版本行到达）。**新迁移从 v34 起** |
 | 连接 | WAL / `synchronous=NORMAL` / `foreign_keys=ON` / `busy_timeout=5s`（`t_sqlite.rs:11522`） |
-| 命令 | `#[tauri::command]` 共 265 处，**全部已注册**：桌面 `generate_handler!` 260 条（`src/main.rs`）+ 客户端 5 条；服务端桥接白名单 **237** 条（`crates/lappp-server/src/bridge_gen.rs`，另有断言校验三者严格划分） |
+| 命令 | `#[tauri::command]` 共 276 处，**全部已注册**：桌面 `generate_handler!` 271 条（`src/main.rs`）+ 客户端 5 条；服务端桥接白名单 **248** 条（`crates/lappp-server/src/bridge_gen.rs`，另有断言校验三者严格划分） |
 | 前端规模 | `src/common` 50 个逻辑模块（21 个 `.js` + 29 个 `.ts`）、`src/components` 76 个 `.vue`、`src/views` 7 个路由视图、`src/locales` 17 种语言（en/zh-CN 各 1700 个 leaf key，多数 1676，vi/zh-TW 1684，ko 1650） |
-| Rust 测试 | `cargo test --workspace` → **786 passed / 0 failed / 12 ignored**（core 698+12 ignored、壳 12、server 72、drag 2+1 ignored） |
+| Rust 测试 | `cargo test --workspace` → **793 passed / 0 failed / 12 ignored**（core 705+12 ignored、壳 12、server 72、drag 2+1 ignored） |
 | 前端测试 | 56 个 `*.test.mjs` 共 **595 用例**，分 **38 个 `test:*` 域**，聚合 `npm run test` 全绿 |
 | 类型门禁 | `npm run typecheck:gate` 基线 **0**（`src-vite/typecheck-baseline.json`）——已经是硬零错门禁 |
 | 支持格式 | **76** 个扩展名：图像 32（常规 14 + FFmpeg 14 + Affinity 4）、RAW 25（`x3f` 临时禁用）、视频 19（`crates/lappp-core/src/t_common.rs`） |

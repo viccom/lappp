@@ -2187,6 +2187,83 @@ pub fn move_faces_to_new_person(face_ids: Vec<i64>) -> Result<i64, String>
 
 
 #[tauri::command]
+pub fn get_household_overview() -> Result<Option<lappp_core::t_household::HouseholdOverview>, String>
+{
+    lappp_core::t_cmds::get_household_overview()
+}
+
+
+#[tauri::command]
+pub fn list_face_names_for_household() -> Result<Vec<lappp_core::t_household::FaceNameForGraph>, String>
+{
+    lappp_core::t_cmds::list_face_names_for_household()
+}
+
+
+#[tauri::command]
+pub fn preview_household_card(file_id: i64) -> Result<Option<String>, String>
+{
+    lappp_core::t_cmds::preview_household_card(file_id)
+}
+
+
+#[tauri::command]
+pub fn create_household(name: String, album_ids: Vec<i64>, root_node_name: String, import_names: Vec<String>) -> Result<i64, String>
+{
+    lappp_core::t_cmds::create_household(name, album_ids, root_node_name, import_names)
+}
+
+
+#[tauri::command]
+pub fn update_household(household_id: i64, name: Option<String>, enabled: Option<bool>, album_ids: Option<Vec<i64>>, root_node_id: Option<i64>) -> Result<(), String>
+{
+    lappp_core::t_cmds::update_household(household_id, name, enabled, album_ids, root_node_id)
+}
+
+
+#[tauri::command]
+pub fn delete_household(household_id: i64) -> Result<bool, String>
+{
+    lappp_core::t_cmds::delete_household(household_id)
+}
+
+
+#[tauri::command]
+pub fn import_household_nodes(person_names: Vec<String>) -> Result<Vec<i64>, String>
+{
+    lappp_core::t_cmds::import_household_nodes(person_names)
+}
+
+
+#[tauri::command]
+pub fn upsert_household_node(node: lappp_core::t_household::HouseholdNode) -> Result<i64, String>
+{
+    lappp_core::t_cmds::upsert_household_node(node)
+}
+
+
+#[tauri::command]
+pub fn delete_household_node(node_id: i64) -> Result<bool, String>
+{
+    lappp_core::t_cmds::delete_household_node(node_id)
+}
+
+
+#[tauri::command]
+pub fn set_household_members(household_id: i64, node_ids: Vec<i64>) -> Result<(), String>
+{
+    lappp_core::t_cmds::set_household_members(household_id, node_ids)
+}
+
+
+#[tauri::command]
+pub fn set_household_edges(household_id: i64, edges: Vec<lappp_core::t_household::HouseholdEdge>) -> Result<(), String>
+{
+    lappp_core::t_cmds::set_household_edges(household_id, edges)
+}
+
+
+#[tauri::command]
 pub fn get_faces_for_file(file_id: i64) -> Result<Vec<t_sqlite::Face>, String>
 {
     lappp_core::t_cmds::get_faces_for_file(file_id)
