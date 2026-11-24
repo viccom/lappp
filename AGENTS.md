@@ -38,9 +38,9 @@
 | DB schema | 迁移 **v33**（`crates/lappp-core/src/t_migration.rs` 的 `get_migrations()` 末尾；2026-11-24 更新）；上游 v23/v24 占位，fork 自有迁移重编号 v25–v30，v31 是 v0.4.0 同步的补偿迁移，v32 播种内置图片理解模板库，v33 让内置模板带上家庭档案卡（文字变了 → 以新版本行到达）。**新迁移从 v34 起** |
 | 连接 | WAL / `synchronous=NORMAL` / `foreign_keys=ON` / `busy_timeout=5s`（`t_sqlite.rs:11522`） |
 | 命令 | `#[tauri::command]` 共 276 处，**全部已注册**：桌面 `generate_handler!` 271 条（`src/main.rs`）+ 客户端 5 条；服务端桥接白名单 **248** 条（`crates/lappp-server/src/bridge_gen.rs`，另有断言校验三者严格划分） |
-| 前端规模 | `src/common` 50 个逻辑模块（21 个 `.js` + 29 个 `.ts`）、`src/components` 76 个 `.vue`、`src/views` 7 个路由视图、`src/locales` 17 种语言（en/zh-CN 各 1700 个 leaf key，多数 1676，vi/zh-TW 1684，ko 1650） |
+| 前端规模 | `src/common` 54 个逻辑模块（24 个 `.js` + 30 个 `.ts`）、`src/components` 76 个顶层 `.vue` 加 `household/` 下 5 个、`src/views` 8 个路由视图、`src/locales` 17 种语言（en/zh-CN 各 1974 个 leaf key，vi 1958，ko 1924；2026-11-25 复核） |
 | Rust 测试 | `cargo test --workspace` → **793 passed / 0 failed / 12 ignored**（core 705+12 ignored、壳 12、server 72、drag 2+1 ignored） |
-| 前端测试 | 56 个 `*.test.mjs` 共 **595 用例**，分 **38 个 `test:*` 域**，聚合 `npm run test` 全绿 |
+| 前端测试 | 59 个 `*.test.mjs` 共 **665 用例**，分 **39 个 `test:*` 域**，聚合 `npm run test` 全绿（2026-11-25） |
 | 类型门禁 | `npm run typecheck:gate` 基线 **0**（`src-vite/typecheck-baseline.json`）——已经是硬零错门禁 |
 | 支持格式 | **76** 个扩展名：图像 32（常规 14 + FFmpeg 14 + Affinity 4）、RAW 25（`x3f` 临时禁用）、视频 19（`crates/lappp-core/src/t_common.rs`） |
 | 推理 | ONNX Runtime `2.0.0-rc.10`，**仅 CPU**（全仓无任何 execution provider 配置）；嵌入维度由运行时探测（CLIP ViT-B/32 实测 512），不硬编码 |
@@ -53,7 +53,7 @@
 ```bash
 # 前端（src-vite/）
 npm run typecheck:gate      # vue-tsc 基线门禁：只许减少不许新增（--update 重新基线化）
-npm run test                # 聚合跑完 38 个 test:* 域
+npm run test                # 聚合跑完 39 个 test:* 域
 npm run test:crossrefs      # 命令 / i18n key / 快捷键 id 三方契约对账
 npm run build               # 桌面 bundle（src-vite/dist）
 
@@ -63,6 +63,10 @@ cargo test -p lappp --no-default-features --features client   # 薄客户端裁�
 
 # 真机冒烟（重建+起 GUI+CDP，会临时注入调试端口并自动回退）
 npm run smoke:desktop
+
+# 在真实浏览器里看页面（改了 .vue 的布局就该跑；两个终端）
+npm run bench                # 起测试台的 dev server：真页面 + 内存库替身，不带 devtools 浮层
+npm run shots:household      # 无头 Chrome 走一遍图谱页，断言并截图到 src-vite/build/shots/
 
 # Windows 三件套
 pwsh -File scripts/build-windows.ps1 -BuildProfile release   # 默认 release
@@ -147,6 +151,11 @@ pwsh -File scripts/build-windows.ps1 -BuildProfile release   # 默认 release
 19. **只写不返回的命令**（Rust `Result<(), String>`）成功时 `invoke` 得到 `null`，失败时抛异常。封装层必须把成功显式变成 `true`，否则页面把成功当失败、写完不刷新（`setHouseholdEdges` 曾如此）。
 20. **测试替身别凭直觉写**：`Set.add` 返回集合本身（恒真），`!seen.add(x)` 永远不成立——一次成环检测因此死循环、测试挂死。Rust 的 `HashSet::insert` 才返回「是否新增」。测试超过 30 秒没结束，先怀疑测试自己的替身。
 21. **`rustfmt` 对 `src-tauri/src/main.rs` 会顺着 `mod` 重排整个壳 crate**（上游代码本来就不是 rustfmt 风格，一次带进 1094 行噪音）。既有文件不跑 rustfmt；只对自己新建的文件跑。
+22. **挂载测试看得见结构，看不见布局**：图谱页连着两版「测试全绿」却被实拍打回——顶栏文字叠在一起、整页出滚动条、底栏被裁掉、空圆圈没有脸。改了 `.vue` 的布局或样式，必须在真实浏览器里**看着截图**收工：`npm run bench` + `npm run shots:household`（`tests/browser/` 是带内存库的测试台，`scripts/shoot-page.mjs` 用无头 Chrome 驱动，控制台报错与断言失败都让它退出非 0）。判断「文档是否出滚动条」要拿 `scrollWidth` 比 `clientWidth`，不能比 `innerWidth`（有滚动条时两者照样相等）。
+23. **`TButton` 是方形图标按钮**：`btn-square` 让它宽高相等，传 `text` 时文字会溢出压到右边的元素上——图谱页顶栏「用于图片理解新建家庭图谱」叠字、人物合并对话框的按钮都是这个原因。带文字的按钮用应用现成的 `<button class="t-button-default">` / `t-button-primary`，或自己写 `.btn`。
+24. **几何逻辑要拿真图核对，再回写成断言**：「姻亲的垂线落到弟弟头上」在坐标上完全合法（不重叠、都在窗口内），只有看图才发现。布局类改动先 `npm run shots:household` 看图，再给看出的问题补一条布局测试（`householdGraph.test.mjs`）。同类教训：多趟排序之间要立刻按新顺序压紧坐标，否则下一趟读到的是过期位置。
+25. **测试替身要照真实命令的返回格式写，别照「方便的」写**：库里的人脸缩略图是**裸 base64 的 JPEG**（`Person::get_page` → `thumbnail`），人物面板自己拼 `data:image/jpeg;base64,`。图谱页的第一版测试台喂的是现成的数据地址，测试全绿、浏览器截图也好看，照原样部署到真库就是一排破图。规则：接一条真实命令之前先读它的 Rust 实现，替身按它的格式给（`tests/helpers/household-library.mjs` 现在给裸 base64，浏览器测试台也走同一条路）；只写不返回的命令返回 `null`、返回布尔的要原样带回，别一律包成 `true`。
+26. **整批替换的命令，范围会随成员变**：`set_household_edges` 替换的是「至少一端是本图谱成员」的全部边。先改成员名单、再拿改之前读到的边去组批，新成员在别处的关系就被抹掉（`set_members` 之后必须 `reload()` 再组批）。同理「从图谱里拿掉一个人」要先删边再改名单（趁他还算成员，删的才是他这些）；他还在别的图谱里时连边也不删。关系是库级的、属于两个人，不属于某份图谱；对象是库级稳定 id，页面不删对象。
 
 ---
 
