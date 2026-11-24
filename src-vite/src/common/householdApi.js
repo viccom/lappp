@@ -56,9 +56,17 @@ export async function createHousehold(name, albumIds, rootNodeName, importNames)
   }
 }
 
+/**
+ * Change a graph. Resolves to true when the library took the change, and to
+ * null when it refused it.
+ *
+ * The command returns nothing, so a caller cannot tell the two apart from
+ * the raw result: the answer is made explicit here.
+ */
 export async function updateHousehold(householdId, changes) {
   try {
-    return await invoke('update_household', { householdId, ...changes });
+    await invoke('update_household', { householdId, ...changes });
+    return true;
   } catch (error) {
     console.error('Failed to change the graph:', error);
     return null;
@@ -101,18 +109,28 @@ export async function deleteHouseholdNode(nodeId) {
   }
 }
 
+/** Replace the members of a graph. True when the library took them, null when it refused. */
 export async function setHouseholdMembers(householdId, nodeIds) {
   try {
-    return await invoke('set_household_members', { householdId, nodeIds });
+    await invoke('set_household_members', { householdId, nodeIds });
+    return true;
   } catch (error) {
     console.error('Failed to write the members:', error);
     return null;
   }
 }
 
+/**
+ * Replace the links of a graph. True when the library took them, null when it
+ * refused the batch (a link to itself, a parent circle, an unknown kind).
+ *
+ * The library checks the whole batch before writing any of it, so a refusal
+ * leaves every link as it was.
+ */
 export async function setHouseholdEdges(householdId, edges) {
   try {
-    return await invoke('set_household_edges', { householdId, edges });
+    await invoke('set_household_edges', { householdId, edges });
+    return true;
   } catch (error) {
     console.error('Failed to write the links:', error);
     return null;

@@ -2282,6 +2282,14 @@
     "albums": "適用於這些相冊",
     "albums_hint": "只有這些相冊裡的照片才會帶上這張卡。",
     "no_named_faces": "還沒有命名過的人，先去人物面板命名。",
-    "no_albums": "還沒有相冊。"
+    "no_albums": "還沒有相冊。",
+    "people_available": "庫裡已命名 {count} 位，可以加入圖譜",
+    "canvas_hint": "滾輪縮放，拖曳平移",
+    "gender": "性别",
+    "gender_unknown": "未填",
+    "gender_male": "男",
+    "gender_female": "女",
+    "birth_year": "出生年",
+    "save_details": "儲存"
   }
 }

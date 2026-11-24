@@ -2272,6 +2272,14 @@
     "albums": "Albums it applies to",
     "albums_hint": "The card is only sent for photos in these albums.",
     "no_named_faces": "Nobody is named yet. Name some faces first.",
-    "no_albums": "No album yet."
+    "no_albums": "No album yet.",
+    "people_available": "{count} people are named, and can join a graph",
+    "canvas_hint": "Scroll to zoom, drag to move",
+    "gender": "Gender",
+    "gender_unknown": "Not set",
+    "gender_male": "Male",
+    "gender_female": "Female",
+    "birth_year": "Born",
+    "save_details": "Save"
   }
 }

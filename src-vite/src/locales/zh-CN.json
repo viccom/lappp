@@ -2300,6 +2300,14 @@
     "albums": "适用于这些相册",
     "albums_hint": "只有这些相册里的照片才会带上这张卡。",
     "no_named_faces": "还没有命名过的人，先去人物面板命名。",
-    "no_albums": "还没有相册。"
+    "no_albums": "还没有相册。",
+    "people_available": "库里已命名 {count} 位，可以加入图谱",
+    "canvas_hint": "滚轮缩放，拖动平移",
+    "gender": "性别",
+    "gender_unknown": "未填",
+    "gender_male": "男",
+    "gender_female": "女",
+    "birth_year": "出生年",
+    "save_details": "保存"
   }
 }
