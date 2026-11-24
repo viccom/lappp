@@ -221,6 +221,9 @@
                     <IconPerson v-else class="w-3.5 h-3.5 text-base-content/30" />
                   </span>
                   {{ person.name || person.id }}
+                  <span v-if="personTerm(person.id)" class="text-base-content/40 font-normal">
+                    {{ personTerm(person.id) }}
+                  </span>
                 </button>
               </div>
             </template>
@@ -565,6 +568,8 @@ import { editableMetadataFields, normalizeFileInfoFields } from '@/common/fileIn
 import ImageNavigator from '@/components/ImageNavigator.vue';
 import { invoke } from '@/common/transport';
 import { navigatorLayout } from '@/common/imageNavigator';
+import { getHouseholdOverview } from '@/common/householdApi';
+import { personTerm as termOfPerson } from '@/common/householdLogic';
 import { h, ref, nextTick, computed, watch, onBeforeUnmount, onMounted } from 'vue';
 import { listen, transportMode } from '@/common/transport';
 import { useI18n } from 'vue-i18n';
@@ -1614,6 +1619,18 @@ function navigateLocation() {
 const filePersons = ref<Array<{ id: number; name: string; thumbnail: string }>>([]);
 let filePersonsRequestSeq = 0;
 
+// The graph of this library: each name gets the word it carries relative to
+// the root. Without a graph nothing is added to the chips.
+const householdOverview = ref<any>(null);
+
+async function loadHousehold() {
+  householdOverview.value = await getHouseholdOverview();
+}
+
+function personTerm(personId: number): string | null {
+  return termOfPerson(householdOverview.value, personId);
+}
+
 async function loadFilePersons(fileId: number) {
   const seq = ++filePersonsRequestSeq;
   if (!fileId || fileId <= 0) {
@@ -1650,6 +1667,7 @@ async function loadFilePersons(fileId: number) {
 
 watch(() => props.fileInfo?.id, (id) => {
   void loadFilePersons(Number(id || 0));
+  void loadHousehold();
 }, { immediate: true });
 
 function navigatePerson(person: { id: number; name: string }) {

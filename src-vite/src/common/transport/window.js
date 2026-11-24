@@ -36,6 +36,7 @@ const webWindowTargets = {
   imageeditor: '/image-editor',
   montage: '/montage',
   'vl-lab': '/vl-lab',
+  household: '/household',
 };
 
 /** A window label that the Web client can reach as a route, or null. */

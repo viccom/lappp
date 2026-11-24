@@ -466,6 +466,40 @@
             </button>
           </div>
 
+          <!-- the family graph: one row per graph -->
+          <div class="rounded-box p-2 space-y-1.5 bg-base-300/30 border border-base-content/5 shadow-sm">
+            <div class="flex items-center gap-2">
+              <div class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
+                <div>{{ $t('settings.household.title') }}</div>
+                <div class="text-xs text-base-content/30">{{ $t('settings.household.hint') }}</div>
+              </div>
+              <button class="t-button-default btn-outline ml-auto shrink-0" @click="openHouseholdFromSettings">
+                {{ $t('settings.household.open') }}
+              </button>
+            </div>
+            <div v-if="householdRows.length" class="flex flex-col gap-1">
+              <div
+                v-for="row in householdRows"
+                :key="row.id"
+                class="flex items-center gap-2 text-xs text-base-content/70"
+              >
+                <span class="truncate font-medium">{{ row.name }}</span>
+                <span class="text-base-content/40 truncate">
+                  {{ $t('household.root') }}: {{ row.rootName }} · {{ row.members }}
+                </span>
+                <label class="ml-auto flex items-center gap-1 cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    class="toggle toggle-xs"
+                    :checked="row.enabled"
+                    @change="setHouseholdEnabled(row.id, ($event.target as HTMLInputElement).checked)"
+                  />
+                </label>
+              </div>
+            </div>
+            <div v-else class="text-xs text-base-content/30">{{ $t('settings.household.empty') }}</div>
+          </div>
+
           <!-- gateway -->
           <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
             <div class="flex items-center gap-2 text-base-content/30">
@@ -1211,6 +1245,8 @@ import { emit, capabilities } from '@/common/transport';
 import { ask, open as openDialog } from '@/common/transport/dialog.js';
 import { useI18n } from 'vue-i18n';
 import { config, libConfig } from '@/common/config';
+import { getHouseholdOverview, updateHousehold } from '@/common/householdApi';
+import { openHouseholdWindow } from '@/common/householdWindow';
 import { normalizeThumbnailSize } from '@/common/thumbnailProfiles';
 import { THUMBNAIL_BADGE, MAP_MARKER_SIZES, SETTINGS_TAB, SETTINGS_BASE_WIDTH, SETTINGS_BASE_HEIGHT, SERVER_SETTINGS_TAB } from '@/common/constants';
 import {
@@ -1333,6 +1369,35 @@ const openingLab = ref(false);
 
 /// Open the lab window, or focus the open one; the lab is the only place
 /// where the new features are wired into a page until they are validated.
+// The family graphs of this library: one row each, with their own switch.
+const householdRows = ref<Array<any>>([]);
+
+async function loadHouseholdRows() {
+  const overview = await getHouseholdOverview();
+  const nodes = new Map<number, any>(
+    (overview?.nodes ?? []).map((node: any) => [node.id, node]),
+  );
+  householdRows.value = (overview?.households ?? []).map((graph: any) => {
+    const root = graph.rootNodeId != null ? nodes.get(graph.rootNodeId) : null;
+    return {
+      id: graph.id,
+      name: graph.name,
+      rootName: root?.displayName || root?.anchors?.[0] || '',
+      members: (graph.memberIds ?? []).length,
+      enabled: graph.enabled !== false,
+    };
+  });
+}
+
+async function setHouseholdEnabled(householdId: number, enabled: boolean) {
+  await updateHousehold(householdId, { enabled });
+  await loadHouseholdRows();
+}
+
+function openHouseholdFromSettings() {
+  void openHouseholdWindow(null);
+}
+
 async function openVlLab() {
   if (openingLab.value) return;
   openingLab.value = true;
@@ -2487,6 +2552,7 @@ const cancelMultilingualModelDownload = async () => {
 };
 
 onMounted(async () => {
+  void loadHouseholdRows();
   window.addEventListener('keydown', handleKeyDown);
   if (!settingsTabs.some(tab => tab.id === config.settings.tabIndex)) {
     config.settings.tabIndex = SETTINGS_TAB.GENERAL;

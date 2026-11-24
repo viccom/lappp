@@ -852,7 +852,10 @@
       "index_faces": "索引人脸",
       "reset_index": "重置索引",
       "unnamed": "未命名人物",
-      "search": "搜索人物"
+      "search": "搜索人物",
+      "open_graph": "打开家庭图谱",
+      "join_graph": "加入家庭图谱…",
+      "make_root": "以此人为根"
     },
     "tag": {
       "rename": "重命名",
@@ -2063,6 +2066,13 @@
       "add_album_button": "新增",
       "add_album_success": "已新增相册「{name}」。",
       "add_album_failed": "无法新增相册（请检查服务器上的路径）。"
+    },
+    "household": {
+      "title": "家庭图谱",
+      "new": "新建图谱",
+      "empty": "还没有图谱",
+      "hint": "谁是谁，以及他们的关系。",
+      "open": "打开"
     }
   },
   "vl": {
@@ -2246,5 +2256,36 @@
     "setup_done": "密码已设置，请使用密码登录",
     "failed_default": "登录失败",
     "hint_pairing_code": "配对码在 lappp-server 启动时打印到控制台（5 分钟内有效）。"
+  },
+  "household": {
+    "root": "根",
+    "used_for_vision": "用于图片理解",
+    "preview_card": "预览卡片",
+    "members": "成员",
+    "not_joined": "未加入",
+    "add": "添加",
+    "search_names": "搜索名字",
+    "no_candidates": "没有可以添加的人了",
+    "empty_graph": "还没有成员，从左边加入一位",
+    "parents": "父母",
+    "children": "子女",
+    "spouse": "配偶",
+    "social": "社交",
+    "derived": "还连着",
+    "open_graph": "打开家庭图谱",
+    "join_graph": "加入家庭图谱…",
+    "make_root": "以此人为根",
+    "title": "家庭图谱",
+    "new": "新建图谱",
+    "empty": "还没有图谱",
+    "social_label": {
+      "classmate": "同学",
+      "teacher": "老师",
+      "student": "学生",
+      "friend": "朋友",
+      "colleague": "同事",
+      "neighbour": "邻居",
+      "partner": "恋人"
+    }
   }
 }

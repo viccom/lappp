@@ -852,7 +852,10 @@
       "index_faces": "Index faces",
       "reset_index": "Reset index",
       "unnamed": "Unnamed person",
-      "search": "Search people"
+      "search": "Search people",
+      "open_graph": "Open the family graph",
+      "join_graph": "Join the family graph…",
+      "make_root": "Make this person the root"
     },
     "tag": {
       "rename": "Rename",
@@ -2063,6 +2066,13 @@
       "add_album_button": "Add",
       "add_album_success": "Album \"name}\" added.",
       "add_album_failed": "Could not add the album (check the path on the server)."
+    },
+    "household": {
+      "title": "Family graph",
+      "new": "New graph",
+      "empty": "No graph yet",
+      "hint": "Who is who, and how they are related.",
+      "open": "Open"
     }
   },
   "vl": {
@@ -2246,5 +2256,36 @@
     "setup_done": "Password set — sign in with it now",
     "failed_default": "Sign-in failed",
     "hint_pairing_code": "The pairing code is printed by lappp-server at startup (valid 5 minutes)."
+  },
+  "household": {
+    "root": "Root",
+    "used_for_vision": "Use for image understanding",
+    "preview_card": "Preview card",
+    "members": "Members",
+    "not_joined": "Not in this graph",
+    "add": "Add",
+    "search_names": "Search names",
+    "no_candidates": "Nobody left to add",
+    "empty_graph": "No members yet. Add someone on the left.",
+    "parents": "Parents",
+    "children": "Children",
+    "spouse": "Spouse",
+    "social": "Social",
+    "derived": "Also related",
+    "open_graph": "Open the family graph",
+    "join_graph": "Join the family graph…",
+    "make_root": "Make this person the root",
+    "title": "Family graph",
+    "new": "New graph",
+    "empty": "No graph yet",
+    "social_label": {
+      "classmate": "classmate",
+      "teacher": "teacher",
+      "student": "student",
+      "friend": "friend",
+      "colleague": "colleague",
+      "neighbour": "neighbour",
+      "partner": "partner"
+    }
   }
 }

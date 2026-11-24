@@ -34,6 +34,11 @@ const routes = [
     component: () => import('@/views/Settings.vue'),
   },
   {
+    path: '/household',
+    name: 'Household',
+    component: () => import('@/views/Household.vue'),
+  },
+  {
     path: '/vl-lab',
     name: 'VlLab',
     component: () => import('@/views/VlLab.vue'),

@@ -852,7 +852,10 @@
       "index_faces": "建立人臉索引",
       "reset_index": "重設索引",
       "unnamed": "未命名人物",
-      "search": "搜尋人物"
+      "search": "搜尋人物",
+      "open_graph": "打開家庭圖譜",
+      "join_graph": "加入家庭圖譜…",
+      "make_root": "以此人為根"
     },
     "tag": {
       "rename": "重新命名",
@@ -2063,6 +2066,13 @@
       "add_album_button": "新增",
       "add_album_success": "已新增相簿「{name}」。",
       "add_album_failed": "無法新增相簿（請檢查伺服器上的路徑）。"
+    },
+    "household": {
+      "title": "家庭圖譜",
+      "new": "新增圖譜",
+      "empty": "還沒有圖譜",
+      "hint": "誰是誰，以及他們的關係。",
+      "open": "打開"
     }
   },
   "vl": {
@@ -2228,5 +2238,36 @@
     "rerank_failed": "雲端重排失敗，已保留本地排序",
     "rerank_no_match": "沒有與描述相符的照片",
     "rerank_short": "重排"
+  },
+  "household": {
+    "root": "根",
+    "used_for_vision": "用於圖片理解",
+    "preview_card": "預覽卡片",
+    "members": "成員",
+    "not_joined": "未加入",
+    "add": "新增",
+    "search_names": "搜尋名字",
+    "no_candidates": "沒有可以新增的人了",
+    "empty_graph": "還沒有成員，從左邊加入一位",
+    "parents": "父母",
+    "children": "子女",
+    "spouse": "配偶",
+    "social": "社交",
+    "derived": "還連著",
+    "open_graph": "打開家庭圖譜",
+    "join_graph": "加入家庭圖譜…",
+    "make_root": "以此人為根",
+    "title": "家庭圖譜",
+    "new": "新增圖譜",
+    "empty": "還沒有圖譜",
+    "social_label": {
+      "classmate": "同學",
+      "teacher": "老師",
+      "student": "學生",
+      "friend": "朋友",
+      "colleague": "同事",
+      "neighbour": "鄰居",
+      "partner": "戀人"
+    }
   }
 }

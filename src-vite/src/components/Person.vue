@@ -154,6 +154,10 @@
               <span class="sidebar-item-label">
                 {{ getPersonDisplayName(person) }}
               </span>
+              <span
+                v-if="isRootPerson(person)"
+                class="shrink-0 text-[10px] px-1 rounded-box bg-primary/15 text-primary"
+              >{{ $t('household.root') }}</span>
               <div class="ml-auto flex flex-row items-center text-base-content/30">
                 <span v-if="person.count" class="sidebar-item-count shrink-0">
                   {{ person.count.toLocaleString() }}
@@ -254,6 +258,9 @@ import { getPersonsPage, renamePerson, deletePerson, indexFaces, cancelFaceIndex
 import { useLibraryChangeRefresh } from '@/composables/useLibraryChangeRefresh';
 import { SIDEBAR, PERSON_PAGE_SIZE } from '@/common/constants';
 import { pushMergeRecord, remapPersonRules, toggleSelection, rowAfterMerge } from '@/common/personMerge';
+import { getHouseholdOverview } from '@/common/householdApi';
+import { openHouseholdWindow } from '@/common/householdWindow';
+import { rootBadgeVisible } from '@/common/householdLogic';
 import {
   IconPerson,
   IconMore,
@@ -341,6 +348,21 @@ let unlistenCluster: (() => void) | null = null;
 
 const sortedPersons = computed(() => allPersons.value);
 
+// The graphs of this library. A library without them has no root to badge,
+// and nothing about the panel changes.
+const householdOverview = ref<any>(null);
+const householdRootId = computed<number | null>(
+  () => householdOverview.value?.households?.[0]?.rootNodeId ?? null,
+);
+
+async function loadHousehold() {
+  householdOverview.value = await getHouseholdOverview();
+}
+
+function isRootPerson(person: any) {
+  return rootBadgeVisible(person?.id, householdRootId.value);
+}
+
 // Computed property to format cluster progress text using i18n
 const { t } = useI18n();
 const getPersonDisplayName = (person: any) => person?.name || t('menu.person.unnamed');
@@ -416,6 +438,13 @@ const getMoreMenuItems = () => [
   },
   { label: "-", action: null },
   {
+    // The graph has a page of its own; this opens it on this person.
+    label: localeMsg.value.menu?.person?.open_graph || 'Open the family graph',
+    icon: IconLink,
+    action: () => openHouseholdWindow(selectedPerson.value?.id ?? null),
+  },
+  { label: "-", action: null },
+  {
     label: localeMsg.value.menu?.person?.delete || 'Delete',
     icon: IconTrash,
     action: () => {
@@ -426,6 +455,7 @@ const getMoreMenuItems = () => [
 
 onMounted(async () => {
   loadPersons();
+  loadHousehold();
   checkFaceStats();
   
   // Check if indexing is already running and restore progress
