@@ -143,7 +143,7 @@ pub const TABLES: [&str; 6] = [
 ///
 /// This is the one question every read path asks: without the tables there
 /// is no graph, and nothing about the library may change.
-pub(crate) fn tables_present(conn: &Connection) -> Result<bool, String> {
+pub fn tables_present(conn: &Connection) -> Result<bool, String> {
     let mut stmt = conn
         .prepare("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)")
         .map_err(|e| e.to_string())?;
@@ -156,7 +156,7 @@ pub(crate) fn tables_present(conn: &Connection) -> Result<bool, String> {
 /// Create the tables of the module.
 ///
 /// Calling it twice is not a problem: every statement is `IF NOT EXISTS`.
-pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), String> {
+pub fn ensure_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "-- Objects (nodes). They belong to the library, not to a graph.
          CREATE TABLE IF NOT EXISTS household_nodes (
@@ -233,35 +233,31 @@ pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), String> {
 /// The kind of link the catalog knows, for a kind and a label.
 ///
 /// `parent` and `spouse` carry no label; the social links need one.
-pub(crate) fn relation_type(kind: &str, label: Option<&str>) -> Option<&'static RelationType> {
+pub fn relation_type(kind: &str, label: Option<&str>) -> Option<&'static RelationType> {
     RELATION_TYPES
         .iter()
         .find(|relation| relation.kind == kind && relation.label == label)
 }
 
 /// Whether the catalog knows this kind of link.
-pub(crate) fn is_known_kind(kind: &str) -> bool {
+pub fn is_known_kind(kind: &str) -> bool {
     RELATION_TYPES.iter().any(|relation| relation.kind == kind)
 }
 
 /// Whether the catalog knows this social label.
-pub(crate) fn is_known_label(label: &str) -> bool {
+pub fn is_known_label(label: &str) -> bool {
     RELATION_TYPES
         .iter()
         .any(|relation| relation.label == Some(label))
 }
 
 /// Whether the catalog knows this object class.
-pub(crate) fn is_known_class(name: &str) -> bool {
+pub fn is_known_class(name: &str) -> bool {
     NODE_CLASSES.iter().any(|class| class.name == name)
 }
 
 /// Whether a link may connect two objects of these classes.
-pub(crate) fn relation_accepts_classes(
-    relation: &RelationType,
-    from_class: &str,
-    to_class: &str,
-) -> bool {
+pub fn relation_accepts_classes(relation: &RelationType, from_class: &str, to_class: &str) -> bool {
     relation.from == from_class && relation.to == to_class
 }
 
@@ -270,7 +266,7 @@ pub(crate) fn relation_accepts_classes(
 /// A symmetric link is stored once, with the smaller object id first. A
 /// directed link keeps the order it was given: a teacher is stored as
 /// teacher → student, never the other way round.
-pub(crate) fn normalise_ends(relation: &RelationType, from_node: i64, to_node: i64) -> (i64, i64) {
+pub fn normalise_ends(relation: &RelationType, from_node: i64, to_node: i64) -> (i64, i64) {
     match relation.direction {
         Direction::Symmetric => {
             if from_node <= to_node {
@@ -354,10 +350,620 @@ impl Default for HouseholdEdge {
 }
 
 /// The kinds of source a link may have.
-pub(crate) const SOURCES: [&str; 3] = ["user", "imported", "suggested"];
+pub const SOURCES: [&str; 3] = ["user", "imported", "suggested"];
+
+/// The gender of an object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gender {
+    Male,
+    Female,
+    Unknown,
+}
+
+impl Gender {
+    /// The gender as the library stores it.
+    pub fn parse(value: &str) -> Gender {
+        match value {
+            "male" => Gender::Male,
+            "female" => Gender::Female,
+            _ => Gender::Unknown,
+        }
+    }
+}
+
+/// What the derivation needs to know about an object.
+#[derive(Debug, Clone)]
+pub struct DerivationNode {
+    pub id: i64,
+    /// 'male' | 'female' | 'unknown'
+    pub gender: String,
+    /// The year the person was born, if the user wrote it down.
+    pub birth_year: Option<i32>,
+}
+
+/// One link as the derivation sees it.
+#[derive(Debug, Clone)]
+pub struct DerivationEdge {
+    pub kind: String,
+    pub from_node: i64,
+    pub to_node: i64,
+    pub label: Option<String>,
+    /// The word to use instead of the derived one.
+    pub term_override: Option<String>,
+    pub valid_from: Option<i64>,
+    pub valid_to: Option<i64>,
+    pub source: String,
+}
+
+/// What the derivation found out about two people.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relation {
+    /// The word, as it follows "是……的".
+    pub term: String,
+    /// The person the word is relative to, when the word alone is not enough.
+    pub via: Option<i64>,
+}
+
+/// The age of a person in the year of a photo.
+pub fn age_at(birth_year: Option<i32>, taken_year: i64) -> Option<i64> {
+    birth_year.map(|year| taken_year - i64::from(year))
+}
+
+/// The year of a birth date like '2011', '2011-05' or '2011-05-07'.
+pub fn birth_year_of(birth_date: Option<&str>) -> Option<i32> {
+    let date = birth_date?.trim();
+    let year: String = date.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if year.len() != 4 {
+        return None;
+    }
+    year.parse::<i32>().ok()
+}
+
+/// The derivation of the relations between the objects of a graph.
+pub struct Derivation<'a> {
+    nodes: &'a [DerivationNode],
+    edges: &'a [DerivationEdge],
+    /// The year of the photo. Without it every link counts.
+    year: Option<i64>,
+}
+
+impl<'a> Derivation<'a> {
+    pub fn new(
+        nodes: &'a [DerivationNode],
+        edges: &'a [DerivationEdge],
+        year: Option<i64>,
+    ) -> Derivation<'a> {
+        Derivation { nodes, edges, year }
+    }
+
+    /// What A is to B, as the word that follows "是……的".
+    ///
+    /// The relations are looked for from the shortest way round: the spouse
+    /// and the parent come before the grandparent, and the grandparent before
+    /// the cousin. Social links never take part; they are only used when
+    /// there is no relation to find at all.
+    pub fn term(&self, a: i64, b: i64) -> Option<Relation> {
+        if a == b {
+            return None;
+        }
+        // One step: the spouse, the parent, the child.
+        if let Some(edge) = self.spouse_between(a, b) {
+            return Some(Relation {
+                term: self
+                    .term_override(edge)
+                    .unwrap_or_else(|| match self.gender(a) {
+                        Gender::Male => "丈夫".to_string(),
+                        Gender::Female => "妻子".to_string(),
+                        Gender::Unknown => "配偶".to_string(),
+                    }),
+                via: None,
+            });
+        }
+        if let Some(edge) = self.ex_spouse_between(a, b) {
+            return Some(Relation {
+                term: self
+                    .term_override(edge)
+                    .unwrap_or_else(|| match self.gender(a) {
+                        Gender::Male => "前夫".to_string(),
+                        Gender::Female => "前妻".to_string(),
+                        Gender::Unknown => "前伴侣".to_string(),
+                    }),
+                via: None,
+            });
+        }
+        if let Some(edge) = self.parent_edge(a, b) {
+            return Some(Relation {
+                term: self
+                    .term_override(edge)
+                    .unwrap_or_else(|| match self.gender(a) {
+                        Gender::Male => "父亲".to_string(),
+                        Gender::Female => "母亲".to_string(),
+                        Gender::Unknown => "父母".to_string(),
+                    }),
+                via: None,
+            });
+        }
+        if let Some(edge) = self.parent_edge(b, a) {
+            return Some(Relation {
+                term: self
+                    .term_override(edge)
+                    .unwrap_or_else(|| match self.gender(a) {
+                        Gender::Male => "儿子".to_string(),
+                        Gender::Female => "女儿".to_string(),
+                        Gender::Unknown => "孩子".to_string(),
+                    }),
+                via: None,
+            });
+        }
+
+        // Two steps: the sibling, the grandparent, the grandchild, the parents
+        // of the spouse, the spouse of the child.
+        if let Some(relation) = self.sibling_relation(a, b) {
+            return Some(relation);
+        }
+        if let Some(relation) = self.grandparent_relation(a, b) {
+            return Some(relation);
+        }
+        if let Some(relation) = self.grandchild_relation(a, b) {
+            return Some(relation);
+        }
+        if let Some(relation) = self.parent_in_law_relation(a, b) {
+            return Some(relation);
+        }
+        if let Some(relation) = self.child_in_law_relation(a, b) {
+            return Some(relation);
+        }
+
+        // Three steps: the uncle and the aunt, the spouse of the sibling, the
+        // spouse of the grandchild.
+        if let Some(relation) = self.uncle_aunt_relation(a, b) {
+            return Some(relation);
+        }
+        if let Some(relation) = self.sibling_in_law_relation(a, b) {
+            return Some(relation);
+        }
+        if let Some(relation) = self.grandchild_in_law_relation(a, b) {
+            return Some(relation);
+        }
+
+        // Four steps: the cousin.
+        if let Some(relation) = self.cousin_relation(a, b) {
+            return Some(relation);
+        }
+
+        self.social_relation(a, b)
+    }
+
+    // ---- the helpers ----
+
+    /// The object, if the library knows it.
+    fn node(&self, id: i64) -> Option<&'a DerivationNode> {
+        self.nodes.iter().find(|node| node.id == id)
+    }
+
+    fn gender(&self, id: i64) -> Gender {
+        match self.node(id) {
+            Some(node) => Gender::parse(&node.gender),
+            None => Gender::Unknown,
+        }
+    }
+
+    fn birth_year(&self, id: i64) -> Option<i32> {
+        self.node(id).and_then(|node| node.birth_year)
+    }
+
+    /// Whether the link is a fact of the library at the time of the photo.
+    ///
+    /// A link that is only suggested is a guess, not a fact. Without a time to
+    /// judge it by, every link counts.
+    fn holds(&self, edge: &DerivationEdge) -> bool {
+        if edge.source == "suggested" {
+            return false;
+        }
+        match self.year {
+            None => true,
+            Some(year) => {
+                edge.valid_from.map_or(true, |from| from <= year)
+                    && edge.valid_to.map_or(true, |to| year < to)
+            }
+        }
+    }
+
+    /// Whether the link has ended before the photo.
+    fn ended(&self, edge: &DerivationEdge) -> bool {
+        match (self.year, edge.valid_to) {
+            (Some(year), Some(to)) => year >= to,
+            _ => false,
+        }
+    }
+
+    /// The word the user gave this link, if they gave one.
+    fn term_override(&self, edge: &DerivationEdge) -> Option<String> {
+        edge.term_override
+            .clone()
+            .filter(|word| !word.trim().is_empty())
+    }
+
+    /// The parent link from a parent to a child.
+    fn parent_edge(&self, parent: i64, child: i64) -> Option<&'a DerivationEdge> {
+        self.edges.iter().find(|edge| {
+            edge.kind == "parent"
+                && edge.from_node == parent
+                && edge.to_node == child
+                && self.holds(edge)
+        })
+    }
+
+    /// The parents of an object, with the link that says so.
+    fn parents(&self, id: i64) -> Vec<(i64, &'a DerivationEdge)> {
+        self.edges
+            .iter()
+            .filter(|edge| edge.kind == "parent" && edge.to_node == id && self.holds(edge))
+            .map(|edge| (edge.from_node, edge))
+            .collect()
+    }
+
+    /// The children of an object, with the link that says so.
+    fn children(&self, id: i64) -> Vec<(i64, &'a DerivationEdge)> {
+        self.edges
+            .iter()
+            .filter(|edge| edge.kind == "parent" && edge.from_node == id && self.holds(edge))
+            .map(|edge| (edge.to_node, edge))
+            .collect()
+    }
+
+    /// The spouse of an object, with the link that says so.
+    fn spouse_of(&self, id: i64) -> Option<(i64, &'a DerivationEdge)> {
+        self.edges
+            .iter()
+            .filter(|edge| edge.kind == "spouse" && self.holds(edge))
+            .find(|edge| edge.from_node == id || edge.to_node == id)
+            .map(|edge| {
+                let other = if edge.from_node == id {
+                    edge.to_node
+                } else {
+                    edge.from_node
+                };
+                (other, edge)
+            })
+    }
+
+    /// The marriage of two people, while it lasts.
+    fn spouse_between(&self, a: i64, b: i64) -> Option<&'a DerivationEdge> {
+        self.edges.iter().find(|edge| {
+            edge.kind == "spouse"
+                && self.holds(edge)
+                && ((edge.from_node == a && edge.to_node == b)
+                    || (edge.from_node == b && edge.to_node == a))
+        })
+    }
+
+    /// The marriage of two people, after it ended.
+    fn ex_spouse_between(&self, a: i64, b: i64) -> Option<&'a DerivationEdge> {
+        self.edges.iter().find(|edge| {
+            edge.kind == "spouse"
+                && !self.holds(edge)
+                && self.ended(edge)
+                && ((edge.from_node == a && edge.to_node == b)
+                    || (edge.from_node == b && edge.to_node == a))
+        })
+    }
+
+    /// Whether the two of them share a parent, and the link from A's side.
+    fn are_siblings(&self, a: i64, b: i64) -> Option<&'a DerivationEdge> {
+        let parents_of_b: Vec<i64> = self.parents(b).into_iter().map(|(id, _)| id).collect();
+        self.parents(a)
+            .into_iter()
+            .find(|(parent, _)| parents_of_b.contains(parent))
+            .map(|(_, edge)| edge)
+    }
+
+    /// Who is older, when both wrote down when they were born.
+    fn is_older(&self, a: i64, b: i64) -> Option<bool> {
+        match (self.birth_year(a), self.birth_year(b)) {
+            (Some(year_a), Some(year_b)) if year_a != year_b => Some(year_a < year_b),
+            _ => None,
+        }
+    }
+
+    // ---- the relations ----
+
+    /// A is the sibling of B.
+    fn sibling_relation(&self, a: i64, b: i64) -> Option<Relation> {
+        let edge = self.are_siblings(a, b)?;
+        let word = match (self.is_older(a, b), self.gender(a)) {
+            (Some(true), Gender::Male) => "哥哥",
+            (Some(true), Gender::Female) => "姐姐",
+            (Some(false), Gender::Male) => "弟弟",
+            (Some(false), Gender::Female) => "妹妹",
+            (_, Gender::Male) => "兄弟",
+            (_, Gender::Female) => "姐妹",
+            (_, Gender::Unknown) => "兄弟姐妹",
+        };
+        Some(Relation {
+            term: self.term_override(edge).unwrap_or_else(|| word.to_string()),
+            via: None,
+        })
+    }
+
+    /// A is the grandparent of B.
+    fn grandparent_relation(&self, a: i64, b: i64) -> Option<Relation> {
+        for (parent, _) in self.parents(b) {
+            for (grandparent, edge) in self.parents(parent) {
+                if grandparent != a {
+                    continue;
+                }
+                let word = match self.gender(parent) {
+                    Gender::Male => match self.gender(a) {
+                        Gender::Male => "爷爷",
+                        Gender::Female => "奶奶",
+                        Gender::Unknown => "祖父母",
+                    },
+                    Gender::Female => match self.gender(a) {
+                        Gender::Male => "外公",
+                        Gender::Female => "外婆",
+                        Gender::Unknown => "外祖父母",
+                    },
+                    Gender::Unknown => "祖父母",
+                };
+                return Some(Relation {
+                    term: self.term_override(edge).unwrap_or_else(|| word.to_string()),
+                    via: None,
+                });
+            }
+        }
+        None
+    }
+
+    /// A is the grandchild of B.
+    fn grandchild_relation(&self, a: i64, b: i64) -> Option<Relation> {
+        for (child, _) in self.children(b) {
+            for (grandchild, edge) in self.children(child) {
+                if grandchild != a {
+                    continue;
+                }
+                let word = match self.gender(child) {
+                    Gender::Male => match self.gender(a) {
+                        Gender::Male => "孙子",
+                        Gender::Female => "孙女",
+                        Gender::Unknown => "孙子女",
+                    },
+                    Gender::Female => match self.gender(a) {
+                        Gender::Male => "外孙",
+                        Gender::Female => "外孙女",
+                        Gender::Unknown => "外孙子女",
+                    },
+                    Gender::Unknown => "孙子女",
+                };
+                return Some(Relation {
+                    term: self.term_override(edge).unwrap_or_else(|| word.to_string()),
+                    via: None,
+                });
+            }
+        }
+        None
+    }
+
+    /// A is the father or the mother of the spouse of B.
+    fn parent_in_law_relation(&self, a: i64, b: i64) -> Option<Relation> {
+        let (spouse, _) = self.spouse_of(b)?;
+        for (parent, edge) in self.parents(spouse) {
+            if parent != a {
+                continue;
+            }
+            let word = match (self.gender(b), self.gender(a)) {
+                (Gender::Male, Gender::Male) => "岳父",
+                (Gender::Male, Gender::Female) => "岳母",
+                (Gender::Male, Gender::Unknown) => "岳父或岳母",
+                (Gender::Female, Gender::Male) => "公公",
+                (Gender::Female, Gender::Female) => "婆婆",
+                (Gender::Female, Gender::Unknown) => "公公或婆婆",
+                (Gender::Unknown, _) => "姻亲",
+            };
+            return Some(Relation {
+                term: self.term_override(edge).unwrap_or_else(|| word.to_string()),
+                via: None,
+            });
+        }
+        None
+    }
+
+    /// A is the wife of the son, or the husband of the daughter, of B.
+    fn child_in_law_relation(&self, a: i64, b: i64) -> Option<Relation> {
+        for (child, _) in self.children(b) {
+            let (spouse, edge) = match self.spouse_of(child) {
+                Some(pair) => pair,
+                None => continue,
+            };
+            if spouse != a {
+                continue;
+            }
+            let word = match (self.gender(child), self.gender(a)) {
+                (Gender::Male, Gender::Female) => Some("儿媳".to_string()),
+                (Gender::Female, Gender::Male) => Some("女婿".to_string()),
+                _ => None,
+            };
+            let fallback = word.is_none();
+            return Some(Relation {
+                term: self
+                    .term_override(edge)
+                    .unwrap_or_else(|| word.unwrap_or_else(|| "伴侣".to_string())),
+                via: fallback.then_some(child),
+            });
+        }
+        None
+    }
+
+    /// A is the uncle, the aunt, the nephew or the niece of B.
+    fn uncle_aunt_relation(&self, a: i64, b: i64) -> Option<Relation> {
+        for (parent, _) in self.parents(b) {
+            let edge = match self.are_siblings(a, parent) {
+                Some(edge) => edge,
+                None => continue,
+            };
+            let word = match self.gender(parent) {
+                Gender::Male => match self.gender(a) {
+                    Gender::Male => match self.is_older(a, parent) {
+                        Some(true) => "伯伯",
+                        Some(false) => "叔叔",
+                        None => "伯父或叔父",
+                    },
+                    Gender::Female => "姑姑",
+                    Gender::Unknown => "叔伯或姑",
+                },
+                Gender::Female => match self.gender(a) {
+                    Gender::Male => "舅舅",
+                    Gender::Female => "姨母",
+                    Gender::Unknown => "舅或姨",
+                },
+                Gender::Unknown => "叔伯姑舅姨",
+            };
+            return Some(Relation {
+                term: self.term_override(edge).unwrap_or_else(|| word.to_string()),
+                via: None,
+            });
+        }
+        None
+    }
+
+    /// A is the husband or the wife of the sibling of B.
+    fn sibling_in_law_relation(&self, a: i64, b: i64) -> Option<Relation> {
+        // The siblings of B: the children of B's parents, apart from B.
+        let siblings: Vec<i64> = self
+            .parents(b)
+            .into_iter()
+            .flat_map(|(parent, _)| self.children(parent))
+            .map(|(child, _)| child)
+            .filter(|child| *child != b)
+            .collect();
+        for sibling in siblings {
+            let (spouse, edge) = match self.spouse_of(sibling) {
+                Some(pair) => pair,
+                None => continue,
+            };
+            if spouse != a {
+                continue;
+            }
+            let older = self.is_older(sibling, b);
+            let word = match (self.gender(sibling), self.gender(a), older) {
+                (Gender::Male, Gender::Female, Some(true)) => Some("嫂子".to_string()),
+                (Gender::Male, Gender::Female, Some(false)) => Some("弟媳".to_string()),
+                (Gender::Female, Gender::Male, Some(true)) => Some("姐夫".to_string()),
+                (Gender::Female, Gender::Male, Some(false)) => Some("妹夫".to_string()),
+                _ => None,
+            };
+            let fallback = word.is_none();
+            return Some(Relation {
+                term: self
+                    .term_override(edge)
+                    .unwrap_or_else(|| word.unwrap_or_else(|| "兄弟姐妹的伴侣".to_string())),
+                via: fallback.then_some(sibling),
+            });
+        }
+        None
+    }
+
+    /// A is the wife of the grandson, or the husband of the granddaughter, of B.
+    fn grandchild_in_law_relation(&self, a: i64, b: i64) -> Option<Relation> {
+        for (child, _) in self.children(b) {
+            for (grandchild, _) in self.children(child) {
+                let (spouse, edge) = match self.spouse_of(grandchild) {
+                    Some(pair) => pair,
+                    None => continue,
+                };
+                if spouse != a {
+                    continue;
+                }
+                let word = match (self.gender(grandchild), self.gender(a)) {
+                    (Gender::Male, Gender::Female) => Some("孙媳".to_string()),
+                    (Gender::Female, Gender::Male) => Some("孙女婿".to_string()),
+                    _ => None,
+                };
+                let fallback = word.is_none();
+                return Some(Relation {
+                    term: self
+                        .term_override(edge)
+                        .unwrap_or_else(|| word.unwrap_or_else(|| "孙辈的伴侣".to_string())),
+                    via: fallback.then_some(grandchild),
+                });
+            }
+        }
+        None
+    }
+
+    /// A and B are cousins.
+    fn cousin_relation(&self, a: i64, b: i64) -> Option<Relation> {
+        let grandparents_of_b: Vec<i64> = self
+            .parents(b)
+            .into_iter()
+            .flat_map(|(parent, _)| self.parents(parent))
+            .map(|(id, _)| id)
+            .collect();
+        let shared: Vec<(i64, &'a DerivationEdge)> = self
+            .parents(a)
+            .into_iter()
+            .flat_map(|(parent, _)| self.parents(parent))
+            .filter(|(grandparent, _)| grandparents_of_b.contains(grandparent))
+            .collect();
+        let edge = match shared.first() {
+            Some((_, edge)) => *edge,
+            None => return None,
+        };
+        // Two married grandparents mean the cousins share both sides: that is
+        // the family of the father, the 堂 side. One grandparent means the
+        // other side, the 表 side.
+        let paternal = shared.len() >= 2
+            && shared.iter().all(|(grandparent, _)| {
+                self.spouse_of(*grandparent)
+                    .map(|(other, _)| shared.iter().any(|(id, _)| *id == other))
+                    .unwrap_or(false)
+            });
+        Some(Relation {
+            term: self.term_override(edge).unwrap_or_else(|| {
+                if paternal {
+                    "堂兄弟姐妹"
+                } else {
+                    "表兄弟姐妹"
+                }
+                .to_string()
+            }),
+            via: None,
+        })
+    }
+
+    /// A and B are connected by a social link.
+    fn social_relation(&self, a: i64, b: i64) -> Option<Relation> {
+        let edge = self.edges.iter().find(|edge| {
+            edge.kind == "social"
+                && self.holds(edge)
+                && ((edge.from_node == a && edge.to_node == b)
+                    || (edge.from_node == b && edge.to_node == a))
+        })?;
+        let label = edge.label.as_deref()?;
+        let word = match label {
+            "classmate" => "同学",
+            "teacher" => {
+                if edge.from_node == a {
+                    "老师"
+                } else {
+                    "学生"
+                }
+            }
+            "friend" => "朋友",
+            "colleague" => "同事",
+            "neighbour" => "邻居",
+            "partner" => "恋人",
+            _ => return None,
+        };
+        Some(Relation {
+            term: self.term_override(edge).unwrap_or_else(|| word.to_string()),
+            via: None,
+        })
+    }
+}
 
 /// The kind of anchor that ties an object to a name of a face.
-pub(crate) const ANCHOR_FACE_NAME: &str = "face_name";
+pub const ANCHOR_FACE_NAME: &str = "face_name";
 
 fn now() -> i64 {
     std::time::SystemTime::now()
@@ -444,7 +1050,7 @@ fn parents_form_a_cycle(parents: &[(i64, i64)]) -> bool {
 ///
 /// The root must be the name of a face, either one of the imported names or a
 /// name that is already in the library.
-pub(crate) fn create_household_with_conn(
+pub fn create_household_with_conn(
     conn: &mut Connection,
     name: &str,
     album_ids: &[i64],
@@ -501,7 +1107,7 @@ pub(crate) fn create_household_with_conn(
 }
 
 /// Change a graph: its name, whether it is used, its albums and its root.
-pub(crate) fn update_household_with_conn(
+pub fn update_household_with_conn(
     conn: &mut Connection,
     household_id: i64,
     name: Option<&str>,
@@ -561,7 +1167,7 @@ pub(crate) fn update_household_with_conn(
 
 /// Delete a graph. The objects and the links between them stay: they are facts
 /// of the library, not of this graph.
-pub(crate) fn delete_household_with_conn(
+pub fn delete_household_with_conn(
     conn: &mut Connection,
     household_id: i64,
 ) -> Result<bool, String> {
@@ -579,10 +1185,7 @@ pub(crate) fn delete_household_with_conn(
 /// A name that the clustering made up ("Person 12") is not about anybody and
 /// is skipped. A name that is already there keeps its object, so importing
 /// twice does not make a second one.
-pub(crate) fn import_names_with_conn(
-    conn: &Connection,
-    names: &[String],
-) -> Result<Vec<i64>, String> {
+pub fn import_names_with_conn(conn: &Connection, names: &[String]) -> Result<Vec<i64>, String> {
     let mut ids = Vec::new();
     for name in names {
         let trimmed = name.trim();
@@ -605,10 +1208,7 @@ pub(crate) fn import_names_with_conn(
 }
 
 /// Write one object, with its anchors.
-pub(crate) fn upsert_node_with_conn(
-    conn: &Connection,
-    node: &HouseholdNode,
-) -> Result<i64, String> {
+pub fn upsert_node_with_conn(conn: &Connection, node: &HouseholdNode) -> Result<i64, String> {
     if !is_known_class(&node.kind) {
         return Err(format!("Unknown object class: {}", node.kind));
     }
@@ -713,7 +1313,7 @@ pub(crate) fn upsert_node_with_conn(
 
 /// Delete an object. The root of a graph cannot be deleted: the graph would
 /// lose the person it is named after.
-pub(crate) fn delete_node_with_conn(conn: &Connection, node_id: i64) -> Result<bool, String> {
+pub fn delete_node_with_conn(conn: &Connection, node_id: i64) -> Result<bool, String> {
     let is_root: bool = conn
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM households WHERE root_node_id = ?1)",
@@ -734,7 +1334,7 @@ pub(crate) fn delete_node_with_conn(conn: &Connection, node_id: i64) -> Result<b
 }
 
 /// The members of a graph, replaced as a whole.
-pub(crate) fn set_members_with_conn(
+pub fn set_members_with_conn(
     conn: &Connection,
     household_id: i64,
     node_ids: &[i64],
@@ -768,7 +1368,7 @@ pub(crate) fn set_members_with_conn(
 /// objects that are not in the graph are left alone. The whole batch is
 /// checked before anything is written, so a batch with one bad link leaves the
 /// library as it was.
-pub(crate) fn set_edges_with_conn(
+pub fn set_edges_with_conn(
     conn: &Connection,
     household_id: i64,
     edges: &[HouseholdEdge],
@@ -1372,6 +1972,497 @@ mod tests {
             create_household_with_conn(&mut conn, "某某家", &[1], "小明", &["小明".to_string()])
                 .unwrap();
         assert!(set_members_with_conn(&conn, household, &[999]).is_err());
+    }
+
+    // ---- the derivation ----
+
+    /// A small graph to derive from.
+    struct Family {
+        nodes: Vec<DerivationNode>,
+        edges: Vec<DerivationEdge>,
+    }
+
+    impl Family {
+        fn new() -> Family {
+            Family {
+                nodes: Vec::new(),
+                edges: Vec::new(),
+            }
+        }
+
+        fn person(&mut self, id: i64, gender: &str, year: Option<i32>) -> i64 {
+            self.nodes.push(DerivationNode {
+                id,
+                gender: gender.to_string(),
+                birth_year: year,
+            });
+            id
+        }
+
+        /// A parent and a child.
+        fn parent(&mut self, parent: i64, child: i64) -> i64 {
+            self.edges.push(DerivationEdge {
+                kind: "parent".to_string(),
+                from_node: parent,
+                to_node: child,
+                label: None,
+                term_override: None,
+                valid_from: None,
+                valid_to: None,
+                source: "user".to_string(),
+            });
+            parent
+        }
+
+        fn spouse(&mut self, a: i64, b: i64) -> i64 {
+            self.edges.push(DerivationEdge {
+                kind: "spouse".to_string(),
+                from_node: a,
+                to_node: b,
+                label: None,
+                term_override: None,
+                valid_from: None,
+                valid_to: None,
+                source: "user".to_string(),
+            });
+            a
+        }
+
+        fn social(&mut self, label: &str, a: i64, b: i64) -> i64 {
+            self.edges.push(DerivationEdge {
+                kind: "social".to_string(),
+                from_node: a,
+                to_node: b,
+                label: Some(label.to_string()),
+                term_override: None,
+                valid_from: None,
+                valid_to: None,
+                source: "user".to_string(),
+            });
+            a
+        }
+
+        fn derive(&self, year: Option<i64>) -> Derivation<'_> {
+            Derivation::new(&self.nodes, &self.edges, year)
+        }
+
+        fn word(&self, a: i64, b: i64, year: Option<i64>) -> Option<String> {
+            self.derive(year).term(a, b).map(|relation| relation.term)
+        }
+    }
+
+    #[test]
+    fn a_parent_is_the_father_or_the_mother_of_the_child() {
+        let mut family = Family::new();
+        let father = family.person(1, "male", Some(1980));
+        let mother = family.person(2, "female", Some(1982));
+        let child = family.person(3, "male", Some(2011));
+        family.parent(father, child);
+        family.parent(mother, child);
+        assert_eq!(family.word(father, child, None).as_deref(), Some("父亲"));
+        assert_eq!(family.word(mother, child, None).as_deref(), Some("母亲"));
+        assert_eq!(family.word(child, father, None).as_deref(), Some("儿子"));
+    }
+
+    #[test]
+    fn a_spouse_is_the_husband_or_the_wife() {
+        let mut family = Family::new();
+        let wife = family.person(1, "female", Some(1980));
+        let husband = family.person(2, "male", Some(1978));
+        family.spouse(husband, wife);
+        assert_eq!(family.word(husband, wife, None).as_deref(), Some("丈夫"));
+        assert_eq!(family.word(wife, husband, None).as_deref(), Some("妻子"));
+    }
+
+    #[test]
+    fn the_grandparents_come_from_the_fathers_side_or_the_mothers_side() {
+        let mut family = Family::new();
+        // Two sets of grandparents: the father's and the mother's.
+        let grandpa = family.person(1, "male", Some(1950));
+        let grandma = family.person(2, "female", Some(1952));
+        let grandpa_of_mother = family.person(3, "male", Some(1948));
+        let grandma_of_mother = family.person(4, "female", Some(1950));
+        let father = family.person(5, "male", Some(1980));
+        let mother = family.person(6, "female", Some(1982));
+        let child = family.person(7, "male", Some(2011));
+        family.parent(grandpa, father);
+        family.parent(grandma, father);
+        family.parent(grandpa_of_mother, mother);
+        family.parent(grandma_of_mother, mother);
+        family.parent(father, child);
+        family.parent(mother, child);
+        assert_eq!(family.word(grandpa, child, None).as_deref(), Some("爷爷"));
+        assert_eq!(family.word(grandma, child, None).as_deref(), Some("奶奶"));
+        assert_eq!(
+            family.word(grandpa_of_mother, child, None).as_deref(),
+            Some("外公")
+        );
+        assert_eq!(
+            family.word(grandma_of_mother, child, None).as_deref(),
+            Some("外婆")
+        );
+    }
+
+    #[test]
+    fn the_grandchildren_come_from_the_sons_side_or_the_daughters_side() {
+        let mut family = Family::new();
+        let father = family.person(1, "male", Some(1980));
+        let mother = family.person(2, "female", Some(1982));
+        let son = family.person(3, "male", Some(2005));
+        let daughter = family.person(4, "female", Some(2008));
+        let grandson_of_son = family.person(5, "male", Some(2030));
+        let grandson_of_daughter = family.person(6, "male", Some(2032));
+        family.parent(father, son);
+        family.parent(mother, son);
+        family.parent(father, daughter);
+        family.parent(mother, daughter);
+        family.parent(son, grandson_of_son);
+        family.parent(daughter, grandson_of_daughter);
+        // The line of the son stays in the family, the line of the daughter
+        // leaves it.
+        assert_eq!(
+            family.word(grandson_of_son, father, None).as_deref(),
+            Some("孙子")
+        );
+        assert_eq!(
+            family.word(grandson_of_son, mother, None).as_deref(),
+            Some("孙子")
+        );
+        assert_eq!(
+            family.word(grandson_of_daughter, father, None).as_deref(),
+            Some("外孙")
+        );
+        assert_eq!(
+            family.word(grandson_of_daughter, mother, None).as_deref(),
+            Some("外孙")
+        );
+    }
+
+    #[test]
+    fn siblings_tell_their_age_when_both_birth_years_are_known() {
+        let mut family = Family::new();
+        let father = family.person(1, "male", Some(1980));
+        let mother = family.person(2, "female", Some(1982));
+        let older = family.person(3, "male", Some(2005));
+        let younger = family.person(4, "female", Some(2008));
+        for child in [older, younger] {
+            family.parent(father, child);
+            family.parent(mother, child);
+        }
+        assert_eq!(family.word(older, younger, None).as_deref(), Some("哥哥"));
+        assert_eq!(family.word(younger, older, None).as_deref(), Some("妹妹"));
+    }
+
+    #[test]
+    fn siblings_without_the_years_stay_neutral() {
+        let mut family = Family::new();
+        let father = family.person(1, "male", None);
+        let mother = family.person(2, "female", None);
+        let older = family.person(3, "male", None);
+        let younger = family.person(4, "female", None);
+        for child in [older, younger] {
+            family.parent(father, child);
+            family.parent(mother, child);
+        }
+        assert_eq!(family.word(older, younger, None).as_deref(), Some("兄弟"));
+        assert_eq!(family.word(younger, older, None).as_deref(), Some("姐妹"));
+    }
+
+    #[test]
+    fn the_uncles_and_aunts_are_named_by_the_side_and_the_age() {
+        let mut family = Family::new();
+        // The father's side.
+        let grandfather = family.person(1, "male", Some(1950));
+        let grandmother = family.person(2, "female", Some(1952));
+        let older_brother = family.person(3, "male", Some(1975));
+        let younger_brother = family.person(4, "male", Some(1985));
+        let aunt = family.person(5, "female", Some(1978));
+        let father = family.person(6, "male", Some(1980));
+        // The mother's side.
+        let grandfather_of_mother = family.person(7, "male", Some(1948));
+        let grandmother_of_mother = family.person(8, "female", Some(1950));
+        let uncle = family.person(9, "male", Some(1975));
+        let aunt_of_mother = family.person(10, "female", Some(1976));
+        let mother = family.person(11, "female", Some(1982));
+        let child = family.person(12, "male", Some(2011));
+        for sibling in [older_brother, younger_brother, aunt, father] {
+            family.parent(grandfather, sibling);
+            family.parent(grandmother, sibling);
+        }
+        for sibling in [uncle, aunt_of_mother, mother] {
+            family.parent(grandfather_of_mother, sibling);
+            family.parent(grandmother_of_mother, sibling);
+        }
+        family.parent(father, child);
+        family.parent(mother, child);
+        assert_eq!(
+            family.word(older_brother, child, None).as_deref(),
+            Some("伯伯")
+        );
+        assert_eq!(
+            family.word(younger_brother, child, None).as_deref(),
+            Some("叔叔")
+        );
+        assert_eq!(family.word(aunt, child, None).as_deref(), Some("姑姑"));
+        assert_eq!(family.word(uncle, child, None).as_deref(), Some("舅舅"));
+        assert_eq!(
+            family.word(aunt_of_mother, child, None).as_deref(),
+            Some("姨母")
+        );
+    }
+
+    #[test]
+    fn the_uncles_without_the_years_stay_neutral() {
+        let mut family = Family::new();
+        let grandfather = family.person(1, "male", None);
+        let grandmother = family.person(2, "female", None);
+        let father = family.person(3, "male", None);
+        let uncle = family.person(4, "male", None);
+        let child = family.person(5, "male", None);
+        family.parent(grandfather, uncle);
+        family.parent(grandmother, uncle);
+        family.parent(grandfather, father);
+        family.parent(grandmother, father);
+        family.parent(father, child);
+        assert_eq!(
+            family.word(uncle, child, None).as_deref(),
+            Some("伯父或叔父")
+        );
+    }
+
+    #[test]
+    fn cousins_are_named_by_whether_the_grandparents_are_married() {
+        let mut family = Family::new();
+        let grandfather = family.person(1, "male", Some(1950));
+        let grandmother = family.person(2, "female", Some(1952));
+        let father = family.person(3, "male", Some(1980));
+        let mother = family.person(4, "female", Some(1982));
+        let uncle = family.person(5, "male", Some(1975));
+        let aunt = family.person(6, "female", Some(1977));
+        let child = family.person(7, "male", Some(2011));
+        let cousin = family.person(8, "male", Some(2013));
+        family.spouse(grandfather, grandmother);
+        for sibling in [father, uncle] {
+            family.parent(grandfather, sibling);
+            family.parent(grandmother, sibling);
+        }
+        for sibling in [mother, aunt] {
+            family.parent(grandfather, sibling);
+            family.parent(grandmother, sibling);
+        }
+        family.parent(father, child);
+        family.parent(uncle, cousin);
+        assert_eq!(
+            family.word(cousin, child, None).as_deref(),
+            Some("堂兄弟姐妹")
+        );
+    }
+
+    #[test]
+    fn the_parents_of_the_spouse_are_the_in_laws() {
+        let mut family = Family::new();
+        let father_of_wife = family.person(1, "male", Some(1950));
+        let mother_of_wife = family.person(2, "female", Some(1952));
+        let wife = family.person(3, "female", Some(1982));
+        let husband = family.person(4, "male", Some(1980));
+        let father_of_husband = family.person(5, "male", Some(1948));
+        let mother_of_husband = family.person(6, "female", Some(1950));
+        family.parent(father_of_wife, wife);
+        family.parent(mother_of_wife, wife);
+        family.parent(father_of_husband, husband);
+        family.parent(mother_of_husband, husband);
+        family.spouse(husband, wife);
+        // The husband sees the parents of his wife as the in-laws.
+        assert_eq!(
+            family.word(father_of_wife, husband, None).as_deref(),
+            Some("岳父")
+        );
+        assert_eq!(
+            family.word(mother_of_wife, husband, None).as_deref(),
+            Some("岳母")
+        );
+        // The wife sees the parents of her husband the other way round.
+        assert_eq!(
+            family.word(father_of_husband, wife, None).as_deref(),
+            Some("公公")
+        );
+        assert_eq!(
+            family.word(mother_of_husband, wife, None).as_deref(),
+            Some("婆婆")
+        );
+        // The shorter way round wins: a father is a father to his own child.
+        assert_eq!(
+            family.word(father_of_wife, wife, None).as_deref(),
+            Some("父亲")
+        );
+    }
+
+    #[test]
+    fn the_spouse_of_the_child_is_the_daughter_or_the_son_in_law() {
+        let mut family = Family::new();
+        let mother = family.person(1, "female", Some(1982));
+        let son = family.person(2, "male", Some(2005));
+        let daughter = family.person(3, "female", Some(2008));
+        let wife_of_son = family.person(4, "female", Some(2006));
+        let husband_of_daughter = family.person(5, "male", Some(2007));
+        family.parent(mother, son);
+        family.parent(mother, daughter);
+        family.spouse(son, wife_of_son);
+        family.spouse(daughter, husband_of_daughter);
+        assert_eq!(
+            family.word(wife_of_son, mother, None).as_deref(),
+            Some("儿媳")
+        );
+        assert_eq!(
+            family.word(husband_of_daughter, mother, None).as_deref(),
+            Some("女婿")
+        );
+    }
+
+    #[test]
+    fn the_spouse_of_the_sibling_is_the_sister_or_the_brother_in_law() {
+        let mut family = Family::new();
+        let father = family.person(1, "male", Some(1980));
+        let mother = family.person(2, "female", Some(1982));
+        let older_brother = family.person(3, "male", Some(2005));
+        let younger_sister = family.person(4, "female", Some(2014));
+        let wife_of_brother = family.person(5, "female", Some(2006));
+        let husband_of_sister = family.person(6, "male", Some(2007));
+        let child = family.person(7, "male", Some(2011));
+        for sibling in [older_brother, younger_sister, child] {
+            family.parent(father, sibling);
+            family.parent(mother, sibling);
+        }
+        family.spouse(older_brother, wife_of_brother);
+        family.spouse(younger_sister, husband_of_sister);
+        assert_eq!(
+            family.word(wife_of_brother, child, None).as_deref(),
+            Some("嫂子")
+        );
+        assert_eq!(
+            family.word(husband_of_sister, child, None).as_deref(),
+            Some("妹夫")
+        );
+    }
+
+    #[test]
+    fn the_spouse_of_the_grandchild_is_the_granddaughter_or_the_grandson_in_law() {
+        let mut family = Family::new();
+        let father = family.person(1, "male", Some(1980));
+        let son = family.person(2, "male", Some(2005));
+        let grandson = family.person(3, "male", Some(2030));
+        let wife_of_grandson = family.person(4, "female", Some(2031));
+        family.parent(father, son);
+        family.parent(son, grandson);
+        family.spouse(grandson, wife_of_grandson);
+        assert_eq!(
+            family.word(wife_of_grandson, father, None).as_deref(),
+            Some("孙媳")
+        );
+    }
+
+    #[test]
+    fn a_social_link_does_not_take_part_in_the_derivation() {
+        let mut family = Family::new();
+        let father = family.person(1, "male", Some(1980));
+        let mother = family.person(2, "female", Some(1982));
+        let child = family.person(3, "male", Some(2011));
+        let classmate = family.person(4, "female", Some(2011));
+        family.parent(father, child);
+        family.parent(mother, child);
+        family.social("classmate", child, classmate);
+        // The classmate is not a relative.
+        assert_eq!(family.word(classmate, child, None).as_deref(), Some("同学"));
+        assert_eq!(family.word(child, child, None), None);
+    }
+
+    #[test]
+    fn a_partner_is_a_lover_and_not_a_relative() {
+        let mut family = Family::new();
+        let woman = family.person(1, "female", Some(1990));
+        let man = family.person(2, "male", Some(1988));
+        family.social("partner", woman, man);
+        assert_eq!(family.word(woman, man, None).as_deref(), Some("恋人"));
+    }
+
+    #[test]
+    fn the_partner_and_the_spouse_of_one_year_leave_the_spouse() {
+        let mut family = Family::new();
+        let wife = family.person(1, "female", Some(1990));
+        let husband = family.person(2, "male", Some(1988));
+        family.social("partner", wife, husband);
+        family.spouse(husband, wife);
+        assert_eq!(family.word(wife, husband, None).as_deref(), Some("妻子"));
+    }
+
+    #[test]
+    fn a_link_that_ends_before_the_photo_leaves_only_the_ex_partner() {
+        let mut family = Family::new();
+        let father_in_law = family.person(1, "male", Some(1950));
+        let wife = family.person(2, "female", Some(1980));
+        let husband = family.person(3, "male", Some(1978));
+        family.parent(father_in_law, wife);
+        family.spouse(husband, wife);
+        // The marriage ended in 2010; the photo is from 2015.
+        family.edges.last_mut().unwrap().valid_to = Some(2010);
+        assert_eq!(
+            family.word(wife, husband, Some(2015)).as_deref(),
+            Some("前妻")
+        );
+        // The father of an ex-wife is not a father-in-law any more.
+        assert_eq!(family.word(father_in_law, husband, Some(2015)), None);
+    }
+
+    #[test]
+    fn a_link_that_has_not_started_yet_is_not_used() {
+        let mut family = Family::new();
+        let wife = family.person(1, "female", Some(1990));
+        let husband = family.person(2, "male", Some(1988));
+        family.spouse(husband, wife);
+        family.edges.last_mut().unwrap().valid_from = Some(2020);
+        assert_eq!(family.word(wife, husband, Some(2015)), None);
+    }
+
+    #[test]
+    fn a_link_that_is_only_suggested_is_not_used() {
+        let mut family = Family::new();
+        let father = family.person(1, "male", Some(1980));
+        let child = family.person(2, "male", Some(2011));
+        family.parent(father, child);
+        family.edges.last_mut().unwrap().source = "suggested".to_string();
+        assert_eq!(family.word(father, child, None), None);
+    }
+
+    #[test]
+    fn the_word_of_the_user_wins_over_the_derived_one() {
+        let mut family = Family::new();
+        let stepmother = family.person(1, "female", Some(1980));
+        let child = family.person(2, "male", Some(2011));
+        family.parent(stepmother, child);
+        family.edges.last_mut().unwrap().term_override = Some("继母".to_string());
+        assert_eq!(
+            family.word(stepmother, child, None).as_deref(),
+            Some("继母")
+        );
+    }
+
+    #[test]
+    fn a_relation_that_cannot_be_derived_is_not_written() {
+        let mut family = Family::new();
+        let stranger = family.person(1, "male", Some(1980));
+        let other = family.person(2, "female", Some(1982));
+        assert_eq!(family.word(stranger, other, None), None);
+    }
+
+    #[test]
+    fn the_age_is_counted_by_the_year_of_the_photo() {
+        assert_eq!(age_at(Some(2011), 2021), Some(10));
+        assert_eq!(age_at(None, 2021), None);
+        assert_eq!(birth_year_of(Some("2011")), Some(2011));
+        assert_eq!(birth_year_of(Some("2011-05")), Some(2011));
+        assert_eq!(birth_year_of(Some("2011-05-07")), Some(2011));
+        assert_eq!(birth_year_of(Some("")), None);
+        assert_eq!(birth_year_of(None), None);
     }
 
     #[test]
