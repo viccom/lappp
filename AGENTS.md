@@ -142,6 +142,11 @@ pwsh -File scripts/build-windows.ps1 -BuildProfile release   # 默认 release
 14. **拍摄时间是墙上时间，不是 UTC**：`afiles.taken_date` 存的是正确瞬间，但凡是把它渲染给人看或给模型看的地方，都要用**本地时区**——前端 `new Date(ts*1000)`、SQLite `strftime(…, 'unixepoch', 'localtime')`、后端 `chrono::Local`。VL 提示词曾用 UTC 渲染，17:04 的傍晚照在提示词里变成 09:04，模型于是（正确地）说「上午」；同理 `{weekday}/{time_of_day}/{season}` 必须从本地墙上时间推导。见 `docs/dev/VL-提示词模板库.md`。
 15. **Windows 上运行中的 exe 会被锁**：探针/工具还在跑时重新链接同一个 exe 会 `LNK1104: 无法打开文件 …vl_probe.exe`；而 `cargo build … | tail -4 && ./tool` 这种写法会用 `tail` 的退出码把编译失败吃掉，**旧二进制照跑**，测出来的结论是假的。规则：编译与运行必须分开跑，编译看**它自己的**退出码（`cargo build … > log 2>&1; echo $?`），确认成功再单独启动工具。
 16. **提示词改动必须同配置重复运行再下结论**：模型输出方差极大——同一个二进制、同一批照片，两轮里「用上人脸姓名」的比例是 1/66 和 8/66，另两轮是 27/66 和 14/66。单轮 11 次调用的 4/11 对 6/11 是噪声，不能当改进证据。网关回报的 `input_tokens` 在同一轮内从 134 到 1500 不等，也不能拿来估成本。评估方法、样本量与已证/未证的结论见 `docs/dev/VL-提示词模板库.md`。
+17. **页面改动必须挂载点过，类型检查不算验证**：一次「只过了 typecheck」的修复把创建对话框放进了只在选中某人时才渲染的块里，用户点「新建」毫无反应。`tests/helpers/vue-mount.mjs` 用 Vue 自带的编译器与渲染器把真正的 `.vue` 挂到对象树上并点击，`tests/householdView.test.mjs` 是范例（后台用按 Rust 命令返回值行事的内存库替身）。改 `.vue` 的交互时照它写一条，并断言 `problems` 为空。
+18. **`scripts/build-windows.ps1` 只跑 cargo，不重建前端**：`lappp.exe` 编译时嵌入 `src-vite/dist`。发布链路第一步是 `npm run build`，确认 `dist/assets` 里有新文案，再编译。
+19. **只写不返回的命令**（Rust `Result<(), String>`）成功时 `invoke` 得到 `null`，失败时抛异常。封装层必须把成功显式变成 `true`，否则页面把成功当失败、写完不刷新（`setHouseholdEdges` 曾如此）。
+20. **测试替身别凭直觉写**：`Set.add` 返回集合本身（恒真），`!seen.add(x)` 永远不成立——一次成环检测因此死循环、测试挂死。Rust 的 `HashSet::insert` 才返回「是否新增」。测试超过 30 秒没结束，先怀疑测试自己的替身。
+21. **`rustfmt` 对 `src-tauri/src/main.rs` 会顺着 `mod` 重排整个壳 crate**（上游代码本来就不是 rustfmt 风格，一次带进 1094 行噪音）。既有文件不跑 rustfmt；只对自己新建的文件跑。
 
 ---
 
