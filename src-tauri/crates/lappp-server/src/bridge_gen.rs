@@ -2,7 +2,7 @@
 //!
 //! Regenerate after adding commands: `python -I docs/dev/gen-lapd-bridge.py`.
 //! Whitelist = class A commands with a network exposure level, in main.rs
-//! registration order: 234 bridged / 257 registered
+//! registration order: 237 bridged / 260 registered
 //! (23 skipped: B desktop-glue, C native-only, A 不暴露).
 use crate::bridge::{
     arg, arg_opt, ok, ok_res, spawn_sync, spawn_sync_plain, BridgeError,
@@ -210,6 +210,9 @@ pub const COMMANDS: &[&str] = &[
     "get_persons_page",
     "rename_person",
     "delete_person",
+    "list_person_targets",
+    "merge_persons",
+    "move_faces_to_new_person",
     "get_faces_for_file",
     "get_af_areas",
     "get_person_thumbnail",
@@ -450,6 +453,9 @@ pub const EXPOSURES: &[(&str, &str)] = &[
     ("get_persons_page", "read"),
     ("rename_person", "write"),
     ("delete_person", "write"),
+    ("list_person_targets", "read"),
+    ("merge_persons", "write"),
+    ("move_faces_to_new_person", "write"),
     ("get_faces_for_file", "read"),
     ("get_af_areas", "read"),
     ("get_person_thumbnail", "read"),
@@ -1549,6 +1555,21 @@ spawn_sync(move || lappp_core::t_cmds::rename_person(person_id, name)).await
         "delete_person" => {
 let person_id: i64 = arg(body, "personId")?;
 spawn_sync(move || lappp_core::t_cmds::delete_person(person_id)).await
+        }
+        // t_cmds::list_person_targets [read]
+        "list_person_targets" => {
+spawn_sync(move || lappp_core::t_cmds::list_person_targets()).await
+        }
+        // t_cmds::merge_persons [write]
+        "merge_persons" => {
+let person_ids: Vec<i64> = arg(body, "personIds")?;
+let target_person_id: i64 = arg(body, "targetPersonId")?;
+spawn_sync(move || lappp_core::t_cmds::merge_persons(person_ids, target_person_id)).await
+        }
+        // t_cmds::move_faces_to_new_person [write]
+        "move_faces_to_new_person" => {
+let face_ids: Vec<i64> = arg(body, "faceIds")?;
+spawn_sync(move || lappp_core::t_cmds::move_faces_to_new_person(face_ids)).await
         }
         // t_cmds::get_faces_for_file [read]
         "get_faces_for_file" => {

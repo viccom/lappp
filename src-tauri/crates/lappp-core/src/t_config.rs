@@ -406,6 +406,16 @@ pub struct PersonState {
     pub name: Option<String>,
 }
 
+/// A link that was made between people, kept so it can be undone.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonMergeState {
+    pub target_id: i64,
+    pub target_name: String,
+    pub face_ids: Vec<i64>,
+    pub at: i64,
+}
+
 /// Per-library state that persists across sessions
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -429,6 +439,8 @@ pub struct LibraryState {
     pub location: LocationState,
     #[serde(default)]
     pub person: PersonState,
+    #[serde(default)]
+    pub person_merges: Vec<PersonMergeState>,
     #[serde(default)]
     pub collection: CollectionState,
     pub search: SearchState,

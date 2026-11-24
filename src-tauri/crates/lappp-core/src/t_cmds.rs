@@ -4487,6 +4487,31 @@ pub fn get_person_thumbnail(person_id: i64) -> Result<Option<String>, String> {
         .map_err(|e| format!("Error while getting person thumbnail: {}", e))
 }
 
+/// The people a link can point at: the ones the user named.
+pub fn list_person_targets() -> Result<Vec<crate::t_person_assign::PersonTarget>, String> {
+    let conn = crate::t_sqlite::open_conn()?;
+    crate::t_person_assign::list_targets_with_conn(&conn)
+        .map_err(|e| format!("Error while listing the people to link to: {}", e))
+}
+
+/// Put the faces of the given people under the person that carries the name.
+pub fn merge_persons(
+    person_ids: Vec<i64>,
+    target_person_id: i64,
+) -> Result<crate::t_person_assign::PersonMergeResult, String> {
+    let indexing = *crate::t_state::face_indexing_status().0.lock().unwrap();
+    let mut conn = crate::t_sqlite::open_conn()?;
+    crate::t_person_assign::merge_persons_with_conn(&mut conn, &person_ids, target_person_id, indexing)
+        .map_err(|e| format!("Error while linking people: {}", e))
+}
+
+/// Move faces into a person of their own, without a name: this undoes a link.
+pub fn move_faces_to_new_person(face_ids: Vec<i64>) -> Result<i64, String> {
+    let mut conn = crate::t_sqlite::open_conn()?;
+    crate::t_person_assign::move_faces_to_new_person_with_conn(&mut conn, &face_ids)
+        .map_err(|e| format!("Error while moving faces: {}", e))
+}
+
 pub fn dedup_start_scan(
     params: Option<crate::t_sqlite::QueryParams>,
     collection_id: Option<i64>,

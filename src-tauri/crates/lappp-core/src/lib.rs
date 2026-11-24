@@ -32,6 +32,7 @@ pub mod t_migration;
 pub mod t_montage;
 pub mod t_motion_photo;
 pub mod t_paths;
+pub mod t_person_assign;
 pub mod t_raw_display;
 pub mod t_rt;
 pub mod t_similar;

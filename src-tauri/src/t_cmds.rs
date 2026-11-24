@@ -2166,6 +2166,27 @@ pub fn delete_person(person_id: i64) -> Result<usize, String>
 
 
 #[tauri::command]
+pub fn list_person_targets() -> Result<Vec<lappp_core::t_person_assign::PersonTarget>, String>
+{
+    lappp_core::t_cmds::list_person_targets()
+}
+
+
+#[tauri::command]
+pub fn merge_persons(person_ids: Vec<i64>, target_person_id: i64) -> Result<lappp_core::t_person_assign::PersonMergeResult, String>
+{
+    lappp_core::t_cmds::merge_persons(person_ids, target_person_id)
+}
+
+
+#[tauri::command]
+pub fn move_faces_to_new_person(face_ids: Vec<i64>) -> Result<i64, String>
+{
+    lappp_core::t_cmds::move_faces_to_new_person(face_ids)
+}
+
+
+#[tauri::command]
 pub fn get_faces_for_file(file_id: i64) -> Result<Vec<t_sqlite::Face>, String>
 {
     lappp_core::t_cmds::get_faces_for_file(file_id)

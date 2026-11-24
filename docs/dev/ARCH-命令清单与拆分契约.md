@@ -10,7 +10,7 @@
 
 | 轴 | 取值 | 含义 |
 |---|---|---|
-| 拆分分类 | **A 纯内核** | 签名无 Tauri 注入参数，只依赖参数与进程内 DB/文件系统，可直接迁入 `lappp-core` |
+| 拆分分类 | **A 纯内核** | 签名无 Tauri 注入参数，只依赖参数与进程内 DB/文件系统，可直接迁入 `lap-core` |
 | | **B 需适配** | 注入 `AppHandle`/`State<…>`/`Window`/`Channel`，迁移时替换为 `AppCtx`/`EventSink` |
 | | **C 原生专属** | 窗口、原生对话框、剪贴板、出窗拖拽、外部程序、壁纸、更新器；留在桌面壳，**不暴露 HTTP** |
 | 暴露等级 | **只读** | 查询/状态/缩略图；社区/手机端默认可用 |
@@ -25,9 +25,9 @@
 
 ## 2. 统计
 
-- 命令总数：**254**
-- 拆分分类：A 纯内核 **234** · B 需适配 **4** · C 原生专属 **16**
-- 暴露等级：只读 **110** · 写入 **87** · 管理员 **39** · 不暴露 **18**
+- 命令总数：**260**
+- 拆分分类：A 纯内核 **239** · B 需适配 **5** · C 原生专属 **16**
+- 暴露等级：只读 **114** · 写入 **90** · 管理员 **38** · 不暴露 **18**
 
 ## 3. 清单（按注册表分组）
 
@@ -164,18 +164,19 @@
 | 16 | `t_cmds::get_collection_group_file_ids` | A 纯内核 | 只读 |  |
 | 17 | `t_cmds::get_collection_query_file_ids` | A 纯内核 | 只读 |  |
 
-### 文件夹文件查询（6）
+### 文件夹文件查询（7）
 
 | # | 命令 | 拆分分类 | 暴露 | 注入/备注 |
 |---:|---|---|---|---|
 | 1 | `t_cmds::get_files_by_ids` | A 纯内核 | 只读 |  |
 | 2 | `t_cmds::get_folder_files` | A 纯内核 | 只读 |  |
 | 3 | `t_cmds::sync_album_folder_mtimes` | A 纯内核 | 管理员 |  |
-| 4 | `t_cmds::refresh_album_subfolders` | A 纯内核 | 管理员 |  |
-| 5 | `t_cmds::is_directory_accessible` | A 纯内核 | 只读 |  |
-| 6 | `t_cmds::get_folder_thumb_count` | A 纯内核 | 只读 |  |
+| 4 | `t_cmds::reconcile_raw_jpeg_pairs` | A 纯内核 | 只读 |  |
+| 5 | `t_cmds::refresh_album_folders` | A 纯内核 | 只读 |  |
+| 6 | `t_cmds::is_directory_accessible` | A 纯内核 | 只读 |  |
+| 7 | `t_cmds::get_folder_thumb_count` | A 纯内核 | 只读 |  |
 
-### 文件操作（24）
+### 文件操作（25）
 
 | # | 命令 | 拆分分类 | 暴露 | 注入/备注 |
 |---:|---|---|---|---|
@@ -191,24 +192,25 @@
 | 10 | `t_cmds::move_file_outside_library` | A 纯内核 | 写入 |  |
 | 11 | `t_cmds::copy_file` | A 纯内核 | 写入 |  |
 | 12 | `t_cmds::import_file` | A 纯内核 | 管理员 |  |
-| 13 | `t_cmds::import_and_organize` | A 纯内核 | 管理员 |  |
-| 14 | `t_cmds::cancel_import_and_organize` | A 纯内核 | 写入 |  |
-| 15 | `t_cmds::import_url` | A 纯内核 | 管理员 |  |
-| 16 | `t_cmds::import_from_drag` | C 原生专属 | 不暴露 | OS 拖放载荷 |
-| 17 | `t_cmds::get_drag_payload` | C 原生专属 | 不暴露 | OS 拖放载荷 |
-| 18 | `t_cmds::import_file_bytes` | A 纯内核 | 管理员 |  |
-| 19 | `t_cmds::has_importable_clipboard` | C 原生专属 | 不暴露 | 系统剪贴板 |
-| 20 | `t_cmds::import_clipboard` | C 原生专属 | 不暴露 | 系统剪贴板 |
-| 21 | `t_cmds::delete_file` | A 纯内核 | 写入 |  |
-| 22 | `t_cmds::delete_file_permanently` | A 纯内核 | 管理员 |  |
-| 23 | `t_cmds::delete_db_file` | A 纯内核 | 管理员 |  |
-| 24 | `t_cmds::batch_delete_files` | A 纯内核 | 写入 |  |
+| 13 | `t_cmds::import_files` | B 需适配 | 写入 | Channel |
+| 14 | `t_cmds::import_and_organize` | A 纯内核 | 管理员 |  |
+| 15 | `t_cmds::cancel_import_and_organize` | A 纯内核 | 写入 |  |
+| 16 | `t_cmds::import_url` | A 纯内核 | 管理员 |  |
+| 17 | `t_cmds::import_from_drag` | C 原生专属 | 不暴露 | OS 拖放载荷 |
+| 18 | `t_cmds::get_drag_payload` | C 原生专属 | 不暴露 | OS 拖放载荷 |
+| 19 | `t_cmds::import_file_bytes` | A 纯内核 | 管理员 |  |
+| 20 | `t_cmds::has_importable_clipboard` | C 原生专属 | 不暴露 | 系统剪贴板 |
+| 21 | `t_cmds::import_clipboard` | C 原生专属 | 不暴露 | 系统剪贴板 |
+| 22 | `t_cmds::delete_file` | A 纯内核 | 写入 |  |
+| 23 | `t_cmds::delete_file_permanently` | A 纯内核 | 管理员 |  |
+| 24 | `t_cmds::delete_db_file` | A 纯内核 | 管理员 |  |
+| 25 | `t_cmds::batch_delete_files` | A 纯内核 | 写入 |  |
 
-### 文件元数据（23）
+### 文件元数据（22）
 
 | # | 命令 | 拆分分类 | 暴露 | 注入/备注 |
 |---:|---|---|---|---|
-| 1 | `t_cmds::edit_file_comment` | A 纯内核 | 写入 |  |
+| 1 | `t_cmds::edit_file_metadata` | A 纯内核 | 写入 |  |
 | 2 | `t_cmds::clean_unused_thumbnail_cache` | A 纯内核 | 管理员 |  |
 | 3 | `t_cmds::get_file_thumb` | A 纯内核 | 只读 |  |
 | 4 | `t_cmds::get_file_thumb_by_id` | A 纯内核 | 只读 |  |
@@ -223,14 +225,13 @@
 | 13 | `t_cmds::end_file_refresh_batch` | A 纯内核 | 写入 |  |
 | 14 | `t_cmds::refresh_selected_file_info` | A 纯内核 | 写入 |  |
 | 15 | `t_cmds::change_video_thumbnail` | A 纯内核 | 写入 |  |
-| 16 | `t_cmds::index_cloud_file` | A 纯内核 | 写入 |  |
-| 17 | `t_cmds::is_cloud_only_file` | A 纯内核 | 只读 |  |
-| 18 | `t_cmds::prepare_motion_photo_video` | A 纯内核 | 只读 |  |
-| 19 | `t_cmds::add_file_to_db` | A 纯内核 | 管理员 |  |
-| 20 | `t_cmds::check_file_exists` | A 纯内核 | 只读 |  |
-| 21 | `t_cmds::check_file_accessibility` | A 纯内核 | 只读 |  |
-| 22 | `t_cmds::set_file_rotate` | A 纯内核 | 写入 |  |
-| 23 | `t_cmds::get_file_has_tags` | A 纯内核 | 只读 |  |
+| 16 | `t_cmds::is_cloud_only_file` | A 纯内核 | 只读 |  |
+| 17 | `t_cmds::prepare_motion_photo_video` | A 纯内核 | 只读 |  |
+| 18 | `t_cmds::add_file_to_db` | A 纯内核 | 管理员 |  |
+| 19 | `t_cmds::check_file_exists` | A 纯内核 | 只读 |  |
+| 20 | `t_cmds::check_file_accessibility` | A 纯内核 | 只读 |  |
+| 21 | `t_cmds::set_file_rotate` | A 纯内核 | 写入 |  |
+| 22 | `t_cmds::get_file_has_tags` | A 纯内核 | 只读 |  |
 
 ### 收藏与评分（9）
 
@@ -320,7 +321,7 @@
 | 2 | `t_embed::rebuild_caption_embeds` | A 纯内核 | 管理员 |  |
 | 3 | `t_embed::search_captions` | A 纯内核 | 只读 |  |
 
-### 人物（人脸）（12）
+### 人物（人脸）（15）
 
 | # | 命令 | 拆分分类 | 暴露 | 注入/备注 |
 |---:|---|---|---|---|
@@ -333,11 +334,14 @@
 | 7 | `t_cmds::get_persons_page` | A 纯内核 | 只读 |  |
 | 8 | `t_cmds::rename_person` | A 纯内核 | 写入 |  |
 | 9 | `t_cmds::delete_person` | A 纯内核 | 写入 |  |
-| 10 | `t_cmds::get_faces_for_file` | A 纯内核 | 只读 |  |
-| 11 | `t_af_area::get_af_areas` | A 纯内核 | 只读 |  |
-| 12 | `t_cmds::get_person_thumbnail` | A 纯内核 | 只读 |  |
+| 10 | `t_cmds::list_person_targets` | A 纯内核 | 只读 |  |
+| 11 | `t_cmds::merge_persons` | A 纯内核 | 写入 |  |
+| 12 | `t_cmds::move_faces_to_new_person` | A 纯内核 | 写入 |  |
+| 13 | `t_cmds::get_faces_for_file` | A 纯内核 | 只读 |  |
+| 14 | `t_af_area::get_af_areas` | A 纯内核 | 只读 |  |
+| 15 | `t_cmds::get_person_thumbnail` | A 纯内核 | 只读 |  |
 
-### 去重 / 相似（16）
+### 去重 / 相似（17）
 
 | # | 命令 | 拆分分类 | 暴露 | 注入/备注 |
 |---:|---|---|---|---|
@@ -347,18 +351,19 @@
 | 4 | `t_cmds::dedup_list_groups` | A 纯内核 | 写入 |  |
 | 5 | `t_cmds::dedup_get_overview` | A 纯内核 | 写入 |  |
 | 6 | `t_cmds::dedup_set_keep` | A 纯内核 | 写入 |  |
-| 7 | `t_cmds::dedup_delete` | A 纯内核 | 管理员 |  |
-| 8 | `t_cmds::similar_start_scan` | A 纯内核 | 管理员 |  |
-| 9 | `t_cmds::similar_get_scan_status` | A 纯内核 | 写入 |  |
-| 10 | `t_cmds::similar_cancel_scan` | A 纯内核 | 写入 |  |
-| 11 | `t_cmds::similar_get_eligible_count` | A 纯内核 | 写入 |  |
-| 12 | `t_cmds::similar_list_groups` | A 纯内核 | 写入 |  |
-| 13 | `t_cmds::similar_get_overview` | A 纯内核 | 写入 |  |
-| 14 | `t_cmds::similar_get_group` | A 纯内核 | 写入 |  |
-| 15 | `t_cmds::similar_set_keep` | A 纯内核 | 写入 |  |
-| 16 | `t_cmds::similar_has_scan` | A 纯内核 | 写入 |  |
+| 7 | `t_cmds::dedup_get_group_items` | A 纯内核 | 写入 |  |
+| 8 | `t_cmds::dedup_delete` | A 纯内核 | 管理员 |  |
+| 9 | `t_cmds::similar_start_scan` | A 纯内核 | 管理员 |  |
+| 10 | `t_cmds::similar_get_scan_status` | A 纯内核 | 写入 |  |
+| 11 | `t_cmds::similar_cancel_scan` | A 纯内核 | 写入 |  |
+| 12 | `t_cmds::similar_get_eligible_count` | A 纯内核 | 写入 |  |
+| 13 | `t_cmds::similar_list_groups` | A 纯内核 | 写入 |  |
+| 14 | `t_cmds::similar_get_overview` | A 纯内核 | 写入 |  |
+| 15 | `t_cmds::similar_get_group` | A 纯内核 | 写入 |  |
+| 16 | `t_cmds::similar_set_keep` | A 纯内核 | 写入 |  |
+| 17 | `t_cmds::similar_has_scan` | A 纯内核 | 写入 |  |
 
-### 图片理解（VL）（21）
+### 图片理解（VL）（22）
 
 | # | 命令 | 拆分分类 | 暴露 | 注入/备注 |
 |---:|---|---|---|---|
@@ -374,15 +379,16 @@
 | 10 | `t_vl::cancel_vl_run` | A 纯内核 | 写入 |  |
 | 11 | `t_vl::rerank_search_with_llm` | A 纯内核 | 写入 |  |
 | 12 | `t_vl::list_vl_models` | A 纯内核 | 只读 |  |
-| 13 | `t_vl::list_vl_runs` | A 纯内核 | 只读 |  |
-| 14 | `t_vl::list_vl_run_calls` | A 纯内核 | 只读 |  |
-| 15 | `t_vl::retry_vl_run` | A 纯内核 | 写入 |  |
-| 16 | `t_vl::delete_vl_run` | A 纯内核 | 写入 |  |
-| 17 | `t_vl::clear_vl_runs` | A 纯内核 | 写入 |  |
-| 18 | `t_vl_schedule::queue_vl_task` | A 纯内核 | 写入 |  |
-| 19 | `t_vl_schedule::list_vl_tasks` | A 纯内核 | 只读 |  |
-| 20 | `t_vl_schedule::update_vl_task_time` | A 纯内核 | 写入 |  |
-| 21 | `t_vl_schedule::delete_vl_task` | A 纯内核 | 写入 |  |
+| 13 | `t_vl::check_vl_vision` | A 纯内核 | 只读 |  |
+| 14 | `t_vl::list_vl_runs` | A 纯内核 | 只读 |  |
+| 15 | `t_vl::list_vl_run_calls` | A 纯内核 | 只读 |  |
+| 16 | `t_vl::retry_vl_run` | A 纯内核 | 写入 |  |
+| 17 | `t_vl::delete_vl_run` | A 纯内核 | 写入 |  |
+| 18 | `t_vl::clear_vl_runs` | A 纯内核 | 写入 |  |
+| 19 | `t_vl_schedule::queue_vl_task` | A 纯内核 | 写入 |  |
+| 20 | `t_vl_schedule::list_vl_tasks` | A 纯内核 | 只读 |  |
+| 21 | `t_vl_schedule::update_vl_task_time` | A 纯内核 | 写入 |  |
+| 22 | `t_vl_schedule::delete_vl_task` | A 纯内核 | 写入 |  |
 
 ### 精确搜索（FTS）（3）
 
