@@ -10703,6 +10703,22 @@ impl Person {
 
         Ok(conn.last_insert_rowid())
     }
+
+    /// Create a new person on an existing connection, for a caller that owns the transaction.
+    pub fn create_with_conn(conn: &Connection, name: Option<&str>) -> Result<i64, String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        conn.execute(
+            "INSERT INTO persons (name, created_at) VALUES (?1, ?2)",
+            params![name, now],
+        )
+        .map_err(|e| e.to_string())?;
+
+        Ok(conn.last_insert_rowid())
+    }
 }
 
 /// The files that show a person.
@@ -10851,7 +10867,7 @@ impl Face {
     pub fn get_all_for_clustering() -> Result<Vec<(i64, i64, Option<Vec<u8>>)>, String> {
         let conn = open_conn()?;
         let mut stmt = conn
-            .prepare("SELECT id, file_id, embedding FROM faces")
+            .prepare("SELECT id, file_id, embedding FROM faces ORDER BY id")
             .map_err(|e| e.to_string())?;
 
         let faces = stmt
