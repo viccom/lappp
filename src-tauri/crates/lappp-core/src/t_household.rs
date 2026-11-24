@@ -6,6 +6,7 @@
 //! library. The tables are created when the first graph is written, not by a
 //! migration, so a library without a graph does not carry six empty tables.
 
+use chrono::Datelike;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
 
@@ -417,6 +418,375 @@ pub fn birth_year_of(birth_date: Option<&str>) -> Option<i32> {
         return None;
     }
     year.parse::<i32>().ok()
+}
+
+/// One person of a photo, as the card needs them.
+#[derive(Debug, Clone)]
+pub struct CardPerson {
+    pub node_id: i64,
+    /// The name the card shows.
+    pub name: String,
+    /// 'male' | 'female' | 'unknown'
+    pub gender: String,
+    pub birth_year: Option<i32>,
+    pub birth_place: Option<String>,
+    pub notes: Option<String>,
+    /// Whether the age of this person may go to the model.
+    pub share_age: bool,
+    /// Whether the birth place and the notes may go to the model.
+    pub share_details: bool,
+}
+
+/// One relation between two people of a photo.
+#[derive(Debug, Clone)]
+pub struct CardRelation {
+    /// The person the relation is about.
+    pub person: i64,
+    /// The person it is relative to.
+    pub other: i64,
+    /// The word, as it follows "是……的".
+    pub term: String,
+}
+
+/// What the card says about a photo.
+#[derive(Debug, Clone)]
+pub struct CardData {
+    /// The people of the photo, in the order they stand in it.
+    pub people: Vec<CardPerson>,
+    pub relations: Vec<CardRelation>,
+    /// How many faces the photo has.
+    pub face_count: usize,
+}
+
+/// The line the card starts with. It tells the model what it may lean on.
+pub const CARD_HEADER: &str = "人物档案（用户整理的关系图谱，可信；只用于画面里已被人脸标注认出的人。图里没有标出关系的人，不要给他编一个关系，也不要当成这个家庭的成员）：";
+
+/// The card of a photo: the people in it and the relations between them.
+///
+/// Without a graph, without a household that applies to the album, or without
+/// a person of the photo that the graph knows, there is no card.
+pub fn card_for_file(conn: &Connection, file_id: i64) -> Result<Option<String>, String> {
+    let Some(data) = card_data_for_file(conn, file_id)? else {
+        return Ok(None);
+    };
+    let taken_year = taken_year_of(conn, file_id)?;
+    Ok(render_card(&data, taken_year))
+}
+
+/// The people of a photo that the graph knows, with their relations.
+fn card_data_for_file(conn: &Connection, file_id: i64) -> Result<Option<CardData>, String> {
+    if !tables_present(conn)? {
+        return Ok(None);
+    }
+
+    // The households that apply to the album of the photo and are switched on.
+    let household_ids: Vec<i64> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT ha.household_id FROM household_albums ha
+                 JOIN households h ON h.id = ha.household_id
+                 JOIN afolders f ON f.album_id = ha.album_id
+                 JOIN afiles a ON a.folder_id = f.id
+                 WHERE a.id = ?1 AND h.enabled = 1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![file_id], |row| row.get::<_, i64>(0))
+            .map_err(|e| e.to_string())?;
+        let mut ids = Vec::new();
+        for row in rows {
+            ids.push(row.map_err(|e| e.to_string())?);
+        }
+        ids
+    };
+    if household_ids.is_empty() {
+        return Ok(None);
+    }
+
+    // The faces of the photo, in the order they stand in it.
+    let faces = faces_of_file(conn, file_id)?;
+    let face_count = faces.len();
+
+    // The people the graph knows: a face whose name belongs to a member of one
+    // of the households.
+    let mut people: Vec<CardPerson> = Vec::new();
+    for face in &faces {
+        let Some(name) = &face.name else { continue };
+        let node_id = match member_node_of(conn, &household_ids, name)? {
+            Some(node_id) => node_id,
+            None => continue,
+        };
+        if people.iter().any(|person| person.node_id == node_id) {
+            continue;
+        }
+        people.push(person_of_node(conn, node_id, name)?);
+    }
+    if people.is_empty() {
+        return Ok(None);
+    }
+
+    // The relations between them, in the year of the photo.
+    let taken_year = taken_year_of(conn, file_id)?;
+    let nodes: Vec<DerivationNode> = people
+        .iter()
+        .map(|person| DerivationNode {
+            id: person.node_id,
+            gender: person.gender.clone(),
+            birth_year: person.birth_year,
+        })
+        .collect();
+    let edges = edges_of_households(conn, &household_ids)?;
+    let derivation = Derivation::new(&nodes, &edges, taken_year);
+    let mut relations = Vec::new();
+    for person in &people {
+        for other in &people {
+            if person.node_id == other.node_id {
+                continue;
+            }
+            if let Some(relation) = derivation.term(person.node_id, other.node_id) {
+                relations.push(CardRelation {
+                    person: person.node_id,
+                    other: other.node_id,
+                    term: relation.term,
+                });
+            }
+        }
+    }
+
+    Ok(Some(CardData {
+        people,
+        relations,
+        face_count,
+    }))
+}
+
+/// One face of a photo.
+struct FaceOfFile {
+    name: Option<String>,
+    /// The middle of the face in the picture, so the people can be listed in
+    /// the order they stand in.
+    center: f64,
+}
+
+/// The faces of a photo, from the left to the right.
+fn faces_of_file(conn: &Connection, file_id: i64) -> Result<Vec<FaceOfFile>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT p.name, f.bbox FROM faces f
+             LEFT JOIN persons p ON p.id = f.person_id
+             WHERE f.file_id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![file_id], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut faces = Vec::new();
+    for row in rows {
+        let (name, bbox) = row.map_err(|e| e.to_string())?;
+        let center = bbox
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<crate::t_face::FaceBox>(raw).ok())
+            .map(|face| f64::from(face.x) + f64::from(face.width) / 2.0)
+            .unwrap_or(f64::MAX);
+        faces.push(FaceOfFile {
+            name: name
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty()),
+            center,
+        });
+    }
+    faces.sort_by(|left, right| {
+        left.center
+            .partial_cmp(&right.center)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(faces)
+}
+
+/// The object of a member of the households that carries this name.
+fn member_node_of(
+    conn: &Connection,
+    household_ids: &[i64],
+    name: &str,
+) -> Result<Option<i64>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT a.node_id FROM household_node_anchors a
+             JOIN household_members m ON m.node_id = a.node_id
+             WHERE a.kind = 'face_name' AND a.value = ?1
+               AND m.household_id IN (SELECT value FROM json_each(?2))
+             LIMIT 1",
+        )
+        .map_err(|e| e.to_string())?;
+    let ids: Vec<i64> = household_ids.to_vec();
+    stmt.query_row(
+        params![name, serde_json::to_string(&ids).unwrap_or_default()],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
+/// The object as the card shows it.
+fn person_of_node(conn: &Connection, node_id: i64, name: &str) -> Result<CardPerson, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT kind, display_name, gender, birth_date, birth_place, notes,
+                    share_age, share_details
+             FROM household_nodes WHERE id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let row = stmt
+        .query_row(params![node_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(CardPerson {
+        node_id,
+        name: row.1.unwrap_or_else(|| name.to_string()),
+        gender: row.2,
+        birth_year: birth_year_of(row.3.as_deref()),
+        birth_place: row.4,
+        notes: row.5,
+        share_age: row.6 != 0,
+        share_details: row.7 != 0,
+    })
+}
+
+/// The links of the households, as the derivation sees them.
+fn edges_of_households(
+    conn: &Connection,
+    household_ids: &[i64],
+) -> Result<Vec<DerivationEdge>, String> {
+    let ids: Vec<i64> = household_ids.to_vec();
+    let mut stmt = conn
+        .prepare(
+            "SELECT e.kind, e.from_node, e.to_node, e.label, e.term_override,
+                    e.valid_from, e.valid_to, e.source
+             FROM household_edges e
+             JOIN household_members m ON m.node_id = e.from_node
+             WHERE m.household_id IN (SELECT value FROM json_each(?1))",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(
+            params![serde_json::to_string(&ids).unwrap_or_default()],
+            |row| {
+                Ok(DerivationEdge {
+                    kind: row.get(0)?,
+                    from_node: row.get(1)?,
+                    to_node: row.get(2)?,
+                    label: row.get(3)?,
+                    term_override: row.get(4)?,
+                    valid_from: row.get(5)?,
+                    valid_to: row.get(6)?,
+                    source: row.get(7)?,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    let mut edges = Vec::new();
+    for row in rows {
+        edges.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(edges)
+}
+
+/// The year the photo was taken, on the wall clock.
+fn taken_year_of(conn: &Connection, file_id: i64) -> Result<Option<i64>, String> {
+    let taken: Option<i64> = conn
+        .query_row(
+            "SELECT taken_date FROM afiles WHERE id = ?1",
+            params![file_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(taken.and_then(|seconds| {
+        chrono::DateTime::from_timestamp(seconds, 0)
+            .map(|time| i64::from(time.with_timezone(&chrono::Local).year()))
+    }))
+}
+/// The card text of a photo.
+///
+/// The card lists the people of the photo and, for each of them, the
+/// relations to the others. A relation between people who are not both in the
+/// photo is left out.
+pub fn render_card(data: &CardData, taken_year: Option<i64>) -> Option<String> {
+    if data.people.is_empty() {
+        return None;
+    }
+    let mut lines = vec![CARD_HEADER.to_string()];
+    for person in &data.people {
+        let mut attributes: Vec<String> = Vec::new();
+        match person.gender.as_str() {
+            "male" => attributes.push("男".to_string()),
+            "female" => attributes.push("女".to_string()),
+            _ => {}
+        }
+        // The age belongs to the children; an adult's age is not sent.
+        if person.share_age {
+            if let (Some(birth_year), Some(taken_year)) = (person.birth_year, taken_year) {
+                let age = taken_year - i64::from(birth_year);
+                if (0..18).contains(&age) {
+                    attributes.push(format!("{birth_year} 年生，拍摄时约 {age} 岁"));
+                }
+            }
+        }
+        if person.share_details {
+            if let Some(place) = &person.birth_place {
+                attributes.push(format!("出生于{place}"));
+            }
+            if let Some(notes) = &person.notes {
+                attributes.push(notes.clone());
+            }
+        }
+
+        let mut line = format!("- {}：", person.name);
+        if !attributes.is_empty() {
+            line.push_str(&attributes.join("，"));
+        }
+        let relations: Vec<String> = data
+            .relations
+            .iter()
+            .filter(|relation| relation.person == person.node_id)
+            .filter_map(|relation| {
+                data.people
+                    .iter()
+                    .find(|other| other.node_id == relation.other)
+                    .map(|other| format!("是{}的{}", other.name, relation.term))
+            })
+            .collect();
+        if !relations.is_empty() {
+            if !attributes.is_empty() {
+                line.push('；');
+            }
+            line.push_str(&relations.join("，"));
+        }
+        line.push('。');
+        lines.push(line);
+    }
+
+    // A face nobody knows is a face the model may not name.
+    let unknown = data.face_count.saturating_sub(data.people.len());
+    if unknown > 0 {
+        lines.push(format!("画面里还有 {unknown} 个人身份未知。"));
+    }
+    Some(lines.join("\n"))
 }
 
 /// The derivation of the relations between the objects of a graph.
@@ -1534,6 +1904,17 @@ mod tests {
         upsert_node_with_conn(conn, &node).unwrap()
     }
 
+    /// An object with one face name and a gender.
+    fn person_with(conn: &Connection, name: &str, gender: &str) -> i64 {
+        let node = HouseholdNode {
+            display_name: Some(name.to_string()),
+            gender: gender.to_string(),
+            anchors: vec![name.to_string()],
+            ..Default::default()
+        };
+        upsert_node_with_conn(conn, &node).unwrap()
+    }
+
     fn link(kind: &str, from_node: i64, to_node: i64, label: Option<&str>) -> HouseholdEdge {
         HouseholdEdge {
             kind: kind.to_string(),
@@ -2463,6 +2844,275 @@ mod tests {
         assert_eq!(birth_year_of(Some("2011-05-07")), Some(2011));
         assert_eq!(birth_year_of(Some("")), None);
         assert_eq!(birth_year_of(None), None);
+    }
+
+    // ---- the card ----
+
+    fn card_person(node_id: i64, name: &str, gender: &str, year: Option<i32>) -> CardPerson {
+        CardPerson {
+            node_id,
+            name: name.to_string(),
+            gender: gender.to_string(),
+            birth_year: year,
+            birth_place: None,
+            notes: None,
+            share_age: true,
+            share_details: false,
+        }
+    }
+
+    #[test]
+    fn a_card_without_people_is_nothing() {
+        let data = CardData {
+            people: Vec::new(),
+            relations: Vec::new(),
+            face_count: 2,
+        };
+        assert_eq!(render_card(&data, Some(2021)), None);
+    }
+
+    #[test]
+    fn the_card_names_the_people_and_the_relations_between_them() {
+        let data = CardData {
+            people: vec![
+                card_person(1, "李静", "female", Some(1982)),
+                card_person(2, "张小满", "male", Some(2011)),
+            ],
+            relations: vec![
+                CardRelation {
+                    person: 1,
+                    other: 2,
+                    term: "母亲".to_string(),
+                },
+                CardRelation {
+                    person: 2,
+                    other: 1,
+                    term: "儿子".to_string(),
+                },
+            ],
+            face_count: 2,
+        };
+
+        let card = render_card(&data, Some(2021)).unwrap();
+
+        assert!(card.starts_with(CARD_HEADER), "{card}");
+        assert!(card.contains("- 李静：女；是张小满的母亲。"), "{card}");
+        assert!(
+            card.contains("- 张小满：男，2011 年生，拍摄时约 10 岁；是李静的儿子。"),
+            "{card}"
+        );
+    }
+
+    #[test]
+    fn the_age_of_an_adult_stays_out_of_the_card() {
+        let data = CardData {
+            people: vec![card_person(1, "李静", "female", Some(1982))],
+            relations: Vec::new(),
+            face_count: 1,
+        };
+
+        let card = render_card(&data, Some(2021)).unwrap();
+
+        assert!(card.contains("- 李静：女。"), "{card}");
+        assert!(!card.contains("岁"), "{card}");
+    }
+
+    #[test]
+    fn a_person_who_may_not_share_their_age_has_no_age_in_the_card() {
+        let mut person = card_person(1, "张小满", "male", Some(2011));
+        person.share_age = false;
+        let data = CardData {
+            people: vec![person],
+            relations: Vec::new(),
+            face_count: 1,
+        };
+
+        let card = render_card(&data, Some(2021)).unwrap();
+
+        assert!(card.contains("- 张小满：男。"), "{card}");
+        assert!(!card.contains("岁"), "{card}");
+    }
+
+    #[test]
+    fn the_birth_place_and_the_notes_only_come_along_when_they_may() {
+        let mut person = card_person(1, "李静", "female", Some(1982));
+        person.birth_place = Some("大屯".to_string());
+        person.notes = Some("爱做饭".to_string());
+        let mut with_details = person.clone();
+        with_details.share_details = true;
+        let data = CardData {
+            people: vec![person],
+            relations: Vec::new(),
+            face_count: 1,
+        };
+        let shared = CardData {
+            people: vec![with_details],
+            relations: Vec::new(),
+            face_count: 1,
+        };
+
+        let card = render_card(&data, Some(2021)).unwrap();
+        assert!(!card.contains("大屯"), "{card}");
+        assert!(!card.contains("爱做饭"), "{card}");
+
+        let card = render_card(&shared, Some(2021)).unwrap();
+        assert!(card.contains("大屯"), "{card}");
+        assert!(card.contains("爱做饭"), "{card}");
+    }
+
+    #[test]
+    fn the_card_says_when_a_face_is_not_known() {
+        let data = CardData {
+            people: vec![card_person(1, "李静", "female", None)],
+            relations: Vec::new(),
+            face_count: 3,
+        };
+
+        let card = render_card(&data, Some(2021)).unwrap();
+
+        assert!(card.contains("画面里还有 2 个人身份未知。"), "{card}");
+    }
+
+    #[test]
+    fn a_relation_to_someone_out_of_the_picture_is_left_out() {
+        let data = CardData {
+            people: vec![card_person(1, "李静", "female", None)],
+            relations: vec![CardRelation {
+                person: 1,
+                other: 99,
+                term: "妻子".to_string(),
+            }],
+            face_count: 1,
+        };
+
+        let card = render_card(&data, Some(2021)).unwrap();
+
+        assert!(card.contains("- 李静：女。"), "{card}");
+        assert!(!card.contains("妻子"), "{card}");
+    }
+
+    /// A library with the tables of the module and one photo in it.
+    fn library_with_photos() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys=ON;
+             CREATE TABLE albums(id INTEGER PRIMARY KEY, name TEXT);
+             CREATE TABLE afolders(id INTEGER PRIMARY KEY, album_id INTEGER, path TEXT);
+             CREATE TABLE afiles(id INTEGER PRIMARY KEY, folder_id INTEGER, name TEXT, taken_date INTEGER);
+             CREATE TABLE persons(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+             CREATE TABLE faces(id INTEGER PRIMARY KEY AUTOINCREMENT, file_id INTEGER, bbox TEXT, person_id INTEGER);
+             INSERT INTO albums VALUES(1, '家庭');
+             INSERT INTO afolders VALUES(1, 1, 'C:/photos');
+             INSERT INTO afiles VALUES(7, 1, 'a.jpg', 1600000000);",
+        )
+        .unwrap();
+        ensure_schema(&conn).unwrap();
+        conn
+    }
+
+    /// A face in the photo, at the given place in the picture.
+    fn face_in_photo(conn: &Connection, name: &str, x: i64) {
+        conn.execute(
+            "INSERT INTO persons(id, name) VALUES ((SELECT COALESCE(MAX(id), 0) + 1 FROM persons), ?1)",
+            [name],
+        )
+        .unwrap();
+        let person_id: i64 = conn
+            .query_row("SELECT MAX(id) FROM persons", [], |row| row.get(0))
+            .unwrap();
+        conn.execute(
+            "INSERT INTO faces(file_id, bbox, person_id) VALUES (7, ?1, ?2)",
+            params![
+                format!("{{\"x\":{x},\"y\":0,\"width\":100,\"height\":100}}"),
+                person_id
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_library_without_the_tables_has_no_card() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE afolders(id INTEGER PRIMARY KEY, album_id INTEGER);
+             CREATE TABLE afiles(id INTEGER PRIMARY KEY, folder_id INTEGER, taken_date INTEGER);
+             CREATE TABLE persons(id INTEGER PRIMARY KEY, name TEXT);
+             CREATE TABLE faces(id INTEGER PRIMARY KEY, file_id INTEGER, person_id INTEGER);
+             INSERT INTO afolders VALUES(1, 1);
+             INSERT INTO afiles VALUES(7, 1, 1600000000);",
+        )
+        .unwrap();
+        assert_eq!(card_for_file(&conn, 7).unwrap(), None);
+    }
+
+    #[test]
+    fn a_photo_without_a_graph_for_its_album_has_no_card() {
+        let conn = library_with_photos();
+        face_in_photo(&conn, "小明", 0);
+        assert_eq!(card_for_file(&conn, 7).unwrap(), None);
+    }
+
+    #[test]
+    fn the_card_of_a_photo_names_the_people_and_their_relations() {
+        let mut conn = library_with_photos();
+        let father = person_with(&conn, "小明", "male");
+        let child = person_with(&conn, "小小", "male");
+        let household = create_household_with_conn(
+            &mut conn,
+            "某某家",
+            &[1],
+            "小明",
+            &["小明".to_string(), "小小".to_string()],
+        )
+        .unwrap();
+        set_edges_with_conn(&conn, household, &[link("parent", father, child, None)]).unwrap();
+        face_in_photo(&conn, "小小", 0);
+        face_in_photo(&conn, "小明", 2000);
+
+        let card = card_for_file(&conn, 7).unwrap().unwrap();
+
+        // The people stand in the picture: the child on the left.
+        assert!(card.contains("- 小小：男"), "{card}");
+        assert!(card.contains("- 小明：男"), "{card}");
+        assert!(card.contains("是小明的儿子"), "{card}");
+        assert!(card.contains("是小小的父亲"), "{card}");
+    }
+
+    #[test]
+    fn a_person_the_graph_does_not_know_is_not_in_the_card() {
+        let mut conn = library_with_photos();
+        let father = person(&conn, "小明");
+        let child = person(&conn, "小小");
+        let household = create_household_with_conn(
+            &mut conn,
+            "某某家",
+            &[1],
+            "小明",
+            &["小明".to_string(), "小小".to_string()],
+        )
+        .unwrap();
+        set_edges_with_conn(&conn, household, &[link("parent", father, child, None)]).unwrap();
+        face_in_photo(&conn, "小小", 0);
+        face_in_photo(&conn, "小明", 2000);
+        // A stranger, named but not in the graph.
+        face_in_photo(&conn, "路人", 4000);
+
+        let card = card_for_file(&conn, 7).unwrap().unwrap();
+
+        assert!(!card.contains("路人"), "{card}");
+        assert!(card.contains("画面里还有 1 个人身份未知。"), "{card}");
+    }
+
+    #[test]
+    fn a_photo_of_people_the_graph_does_not_know_has_no_card() {
+        let mut conn = library_with_photos();
+        let household =
+            create_household_with_conn(&mut conn, "某某家", &[1], "小明", &["小明".to_string()])
+                .unwrap();
+        assert!(household > 0);
+        face_in_photo(&conn, "路人", 0);
+
+        assert_eq!(card_for_file(&conn, 7).unwrap(), None);
     }
 
     #[test]

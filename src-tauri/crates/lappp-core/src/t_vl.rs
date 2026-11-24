@@ -1059,6 +1059,9 @@ pub struct PromptContext {
     pub people: Option<String>,
     /// How many named people the face annotations give.
     pub people_count: Option<String>,
+    /// The card of the household graph: the people of the photo and the
+    /// relations between them. Nothing without a graph.
+    pub family: Option<String>,
     // calendar facts derived from the capture time
     pub weekday: Option<String>,
     pub time_of_day: Option<String>,
@@ -1114,7 +1117,7 @@ pub fn render_system(template: &str, context: &PromptContext) -> String {
 /// The shared placeholder substitution of the prompt and the system message.
 fn render_template(template: &str, context: &PromptContext) -> String {
     let mut rendered = template.to_string();
-    let values: [(&str, Option<&str>); 36] = [
+    let values: [(&str, Option<&str>); 37] = [
         ("{file_name}", context.file_name.as_deref()),
         ("{exif_summary}", context.exif_summary.as_deref()),
         ("{taken_at}", context.taken_at.as_deref()),
@@ -1122,6 +1125,7 @@ fn render_template(template: &str, context: &PromptContext) -> String {
         ("{tags}", context.tags.as_deref()),
         ("{people}", context.people.as_deref()),
         ("{people_count}", context.people_count.as_deref()),
+        ("{family}", context.family.as_deref()),
         ("{weekday}", context.weekday.as_deref()),
         ("{time_of_day}", context.time_of_day.as_deref()),
         ("{season}", context.season.as_deref()),
@@ -1153,9 +1157,60 @@ fn render_template(template: &str, context: &PromptContext) -> String {
         ("{modified_at}", context.modified_at.as_deref()),
     ];
     for (placeholder, value) in values {
+        if placeholder == "{family}" {
+            // The card stands on a line of its own. Without a graph that line
+            // goes away, so a library that does not use the module reads
+            // exactly as it did before.
+            match value {
+                Some(card) => rendered = rendered.replace(placeholder, card),
+                None => rendered = without_placeholder_line(&rendered, placeholder),
+            }
+            continue;
+        }
         rendered = rendered.replace(placeholder, value.unwrap_or(""));
     }
     rendered
+}
+
+/// Remove a placeholder that stands alone on its line, and the line with it.
+///
+/// The text around it stays byte for byte the same.
+fn without_placeholder_line(text: &str, placeholder: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+    while let Some(index) = remaining.find(placeholder) {
+        let before = &remaining[..index];
+        let after = &remaining[index + placeholder.len()..];
+        let line_start = before.rfind('\n').map(|at| at + 1).unwrap_or(0);
+        let prefix = &before[line_start..];
+        let line_end = after.find('\n');
+        let rest_of_line = match line_end {
+            Some(at) => &after[..at],
+            None => after,
+        };
+        if prefix.trim().is_empty() && rest_of_line.trim().is_empty() {
+            match line_end {
+                Some(at) => {
+                    // The line goes, and the line break that follows it with it.
+                    result.push_str(&before[..line_start]);
+                    remaining = &after[at + 1..];
+                }
+                None => {
+                    // The line was the last one: the line break before it goes
+                    // too, so the text ends where it did before.
+                    let head = &before[..line_start];
+                    result.push_str(head.strip_suffix('\n').unwrap_or(head));
+                    remaining = "";
+                }
+            }
+        } else {
+            result.push_str(before);
+            result.push_str(placeholder);
+            remaining = after;
+        }
+    }
+    result.push_str(remaining);
+    result
 }
 
 /// A trimmed value, or `None` when it is empty.
@@ -1289,6 +1344,7 @@ pub fn prompt_context(file: &crate::t_sqlite::AFile) -> PromptContext {
         tags: None,
         people: None,
         people_count: None,
+        family: None,
         weekday: file.taken_date.and_then(weekday_text),
         time_of_day: file.taken_date.and_then(time_of_day_text),
         season: file.taken_date.and_then(season_text),
@@ -1345,6 +1401,9 @@ pub fn prompt_context_with_conn(conn: &Connection, file: &crate::t_sqlite::AFile
         let people = people_names(conn, file_id);
         context.people_count = (!people.is_empty()).then(|| people.len().to_string());
         context.people = names_text(people);
+        // The card of the household graph. A library without the tables of the
+        // module has no card, and nothing about its prompt changes.
+        context.family = crate::t_household::card_for_file(conn, file_id).unwrap_or(None);
     }
     context
 }
@@ -1352,7 +1411,13 @@ pub fn prompt_context_with_conn(conn: &Connection, file: &crate::t_sqlite::AFile
 /// The weekday of a capture time, in Chinese.
 fn weekday_text(seconds: i64) -> Option<String> {
     const WEEKDAYS: [&str; 7] = [
-        "星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日",
+        "星期一",
+        "星期二",
+        "星期三",
+        "星期四",
+        "星期五",
+        "星期六",
+        "星期日",
     ];
     local_datetime(seconds).map(|value| {
         // `weekday()` counts from Monday = 0, the same order as the table.
@@ -3052,14 +3117,7 @@ fn retry_run(state: &VlState, run_id: &str) -> Result<String, String> {
             library_name: library.name.clone(),
             db_path,
         };
-        return start_run_for_library(
-            state,
-            &context,
-            failed,
-            template_id,
-            false,
-            "manual",
-        );
+        return start_run_for_library(state, &context, failed, template_id, false, "manual");
     }
     Err(format!("未找到运行 {run_id}"))
 }
@@ -3220,10 +3278,7 @@ pub async fn check_vl_vision() -> Result<VlVisionCheck, String> {
     }
     let mut png: Vec<u8> = Vec::new();
     image::DynamicImage::ImageRgb8(image)
-        .write_to(
-            &mut std::io::Cursor::new(&mut png),
-            image::ImageFormat::Png,
-        )
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
         .map_err(|error| error.to_string())?;
 
     let request = VlRequest {
@@ -3810,13 +3865,7 @@ fn spawn_run_worker(state: VlState, job: PendingRun) {
                 // terminal state, not vanish as "running" forever.
                 let message = format!("创建网关客户端失败: {error}");
                 eprintln!("Failed to create the VL gateway client: {}", error);
-                finish_run(
-                    &state,
-                    &library.db_path,
-                    &run_id,
-                    "failed",
-                    Some(&message),
-                );
+                finish_run(&state, &library.db_path, &run_id, "failed", Some(&message));
                 drop(slot);
                 pump_queue(&state);
                 return;
@@ -3827,10 +3876,7 @@ fn spawn_run_worker(state: VlState, job: PendingRun) {
         // configured limit is the number of LLM requests in flight at once,
         // across all runs (global permit pool below).
         let emit_progress: Arc<dyn Fn(&VlRunStatus) + Send + Sync> = Arc::new(move |status| {
-            crate::t_events::emit(
-                crate::t_events::names::VL_ANALYSIS_PROGRESS,
-                status.clone(),
-            );
+            crate::t_events::emit(crate::t_events::names::VL_ANALYSIS_PROGRESS, status.clone());
         });
         let emit_tags_changed: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
             crate::t_events::emit(crate::t_events::names::TAGS_CHANGED, ());
@@ -3862,13 +3908,7 @@ fn spawn_run_worker(state: VlState, job: PendingRun) {
         } else {
             "finished"
         };
-        finish_run(
-            &state,
-            &library.db_path,
-            &run_id,
-            final_state,
-            None,
-        );
+        finish_run(&state, &library.db_path, &run_id, final_state, None);
         // Free the slot before pumping: otherwise the queued runs never see it.
         drop(slot);
         pump_queue(&state);
@@ -4084,7 +4124,7 @@ mod tests {
             .unwrap();
             conn.execute_batch(VL_SCHEMA_SQL).unwrap();
             crate::t_migration::ensure_runs_schema(&conn).unwrap();
-        crate::t_migration::ensure_tasks_schema(&conn).unwrap();
+            crate::t_migration::ensure_tasks_schema(&conn).unwrap();
             // The annotations reach the search, so the store carries the index.
             conn.execute_batch(crate::t_fts::FTS_SCHEMA_SQL).unwrap();
             // The AI tags land in the tag tree; the store carries those tables too.
@@ -4655,6 +4695,108 @@ mod tests {
         let context = prompt_context_with_conn(&empty, &without_id);
         assert!(context.tags.is_none());
         assert!(context.people.is_none());
+    }
+
+    #[test]
+    fn the_card_reaches_the_prompt() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys=ON;
+             CREATE TABLE albums(id INTEGER PRIMARY KEY, name TEXT);
+             CREATE TABLE afolders(id INTEGER PRIMARY KEY, album_id INTEGER, path TEXT);
+             CREATE TABLE afiles(id INTEGER PRIMARY KEY, folder_id INTEGER, name TEXT, taken_date INTEGER);
+             CREATE TABLE persons(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+             CREATE TABLE faces(id INTEGER PRIMARY KEY AUTOINCREMENT, file_id INTEGER, bbox TEXT, person_id INTEGER);
+             INSERT INTO albums VALUES(1, '家庭');
+             INSERT INTO afolders VALUES(1, 1, 'C:/photos');
+             INSERT INTO afiles VALUES(7, 1, 'a.jpg', 1600000000);",
+        )
+        .unwrap();
+        crate::t_household::ensure_schema(&conn).unwrap();
+        // A graph with one father and one child.
+        let mut node = crate::t_household::HouseholdNode {
+            display_name: Some("小明".to_string()),
+            gender: "male".to_string(),
+            anchors: vec!["小明".to_string()],
+            ..Default::default()
+        };
+        let father = crate::t_household::upsert_node_with_conn(&conn, &node).unwrap();
+        node.display_name = Some("小小".to_string());
+        node.anchors = vec!["小小".to_string()];
+        let child = crate::t_household::upsert_node_with_conn(&conn, &node).unwrap();
+        let mut conn_mut = conn;
+        let household = crate::t_household::create_household_with_conn(
+            &mut conn_mut,
+            "某某家",
+            &[1],
+            "小明",
+            &["小明".to_string(), "小小".to_string()],
+        )
+        .unwrap();
+        crate::t_household::set_edges_with_conn(
+            &conn_mut,
+            household,
+            &[crate::t_household::HouseholdEdge {
+                kind: "parent".to_string(),
+                from_node: father,
+                to_node: child,
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+        // Two faces in the photo, named after the people of the graph.
+        for name in ["小小", "小明"] {
+            conn_mut
+                .execute("INSERT INTO persons(name) VALUES(?1)", [name])
+                .unwrap();
+            let person_id: i64 = conn_mut
+                .query_row("SELECT MAX(id) FROM persons", [], |row| row.get(0))
+                .unwrap();
+            conn_mut
+                .execute(
+                    "INSERT INTO faces(file_id, person_id) VALUES (7, ?1)",
+                    [person_id],
+                )
+                .unwrap();
+        }
+
+        let file = crate::t_sqlite::AFile {
+            id: Some(7),
+            name: "a.jpg".to_string(),
+            ..Default::default()
+        };
+        let context = prompt_context_with_conn(&conn_mut, &file);
+
+        let card = context.family.clone().expect("the card is missing");
+        assert!(card.contains("是小明的儿子"), "{card}");
+        assert!(card.contains("是小小的父亲"), "{card}");
+        // The card reaches the prompt.
+        let rendered = render_prompt("人物：\n{family}", &context);
+        assert!(rendered.contains("是小明的儿子"), "{rendered}");
+    }
+
+    #[test]
+    fn a_library_without_a_graph_reads_exactly_as_it_did_before() {
+        // The text of the built-in template without the card line is the text
+        // it had before the household card existed. A library without a graph
+        // has no card, so that line goes away with it and the prompt reads
+        // exactly as it did before.
+        let (_, prompt, _, _) = crate::t_vl_templates::library()
+            .into_iter()
+            .next()
+            .expect("the library of templates is empty");
+        let before = prompt.replace(
+            "
+{family}",
+            "",
+        );
+        assert_ne!(before, prompt, "the template has no card line");
+
+        let context = PromptContext::default();
+        let rendered = render_prompt(&prompt, &context);
+
+        assert_eq!(rendered, render_prompt(&before, &context));
+        assert!(!rendered.contains("{family}"));
     }
 
     #[test]
@@ -6947,7 +7089,9 @@ mod tests {
             .conn
             .lock()
             .unwrap()
-            .execute_batch("INSERT INTO afiles VALUES(3,'c.jpg',0),(4,'d.jpg',0),(5,'e.jpg',0),(6,'f.jpg',0);")
+            .execute_batch(
+                "INSERT INTO afiles VALUES(3,'c.jpg',0),(4,'d.jpg',0),(5,'e.jpg',0),(6,'f.jpg',0);",
+            )
             .unwrap();
         let template = analysis_template(&store);
         let state = VlState::default();
@@ -6984,10 +7128,8 @@ mod tests {
         }
         let gateway = mock::spawn_tracked(120).await;
 
-        let db_path = std::env::temp_dir().join(format!(
-            "vl-peak-{}.db",
-            uuid::Uuid::new_v4().simple()
-        ));
+        let db_path =
+            std::env::temp_dir().join(format!("vl-peak-{}.db", uuid::Uuid::new_v4().simple()));
         let conn = Connection::open(&db_path).unwrap();
         crate::t_migration::ensure_runs_schema(&conn).unwrap();
         crate::t_migration::ensure_tasks_schema(&conn).unwrap();
@@ -7168,7 +7310,8 @@ mod run_lifecycle_tests {
              INSERT INTO afiles VALUES(1,'a.jpg',0),(2,'b.jpg',0),(3,'c.jpg',0);",
         )
         .unwrap();
-        conn.execute_batch(crate::t_migration::VL_SCHEMA_SQL).unwrap();
+        conn.execute_batch(crate::t_migration::VL_SCHEMA_SQL)
+            .unwrap();
         crate::t_migration::ensure_runs_schema(&conn).unwrap();
         crate::t_migration::ensure_tasks_schema(&conn).unwrap();
         conn
@@ -7228,7 +7371,10 @@ mod run_lifecycle_tests {
 
         assert_eq!(failed_file_ids(&conn, "r1").unwrap(), vec![2, 3]);
         assert_eq!(failed_file_ids(&conn, "r2").unwrap(), vec![1]);
-        assert_eq!(failed_file_ids(&conn, "missing").unwrap(), Vec::<i64>::new());
+        assert_eq!(
+            failed_file_ids(&conn, "missing").unwrap(),
+            Vec::<i64>::new()
+        );
     }
 
     #[test]
@@ -7241,7 +7387,11 @@ mod run_lifecycle_tests {
 
         assert_eq!(delete_run_row(&conn, "done").unwrap(), 1);
         assert_eq!(run_call_count(&conn, "done"), 0, "calls must cascade away");
-        assert_eq!(delete_run_row(&conn, "done").unwrap(), 0, "second delete is a no-op");
+        assert_eq!(
+            delete_run_row(&conn, "done").unwrap(),
+            0,
+            "second delete is a no-op"
+        );
 
         insert_run_row(&conn, &record("live", "running")).unwrap();
         let err = delete_run_row(&conn, "live").unwrap_err();
@@ -7298,9 +7448,9 @@ mod vision_check_tests {
             "我无法看到这张图片。",
             "我是纯文本处理模型，无法解析图像内容。",
             "I cannot read the image.",
-            "红色",      // only half of the probe
+            "红色", // only half of the probe
             "blue",
-            "hundred",   // must not match on a substring of an unrelated word
+            "hundred", // must not match on a substring of an unrelated word
         ] {
             assert!(!answer_names_red_and_blue(answer), "should fail: {answer}");
         }

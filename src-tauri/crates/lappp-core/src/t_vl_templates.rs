@@ -32,7 +32,8 @@ const CONTEXT: &str = "照片信息：\n\
      画面人物（来自人脸标注，按画面从左到右排列，共 {people_count} 人，可能不完整）：{people}\n\
      拍摄参数：{exif_summary}\n\
      相机：{camera}\n\
-     画面尺寸：{dimensions}";
+     画面尺寸：{dimensions}\n\
+     {family}";
 
 /// The rules every template ends with.
 const RULES: &str = "规则：\n\
@@ -197,10 +198,7 @@ pub const LIBRARY: &[BuiltinTemplate] = &[
 /// The prompt of a template: the context block and the rules around the
 /// template's own body.
 pub fn prompt_of(template: &BuiltinTemplate) -> String {
-    format!(
-        "{}\n\n{}\n\n{}",
-        template.prompt, CONTEXT, RULES
-    )
+    format!("{}\n\n{}\n\n{}", template.prompt, CONTEXT, RULES)
 }
 
 /// The whole built-in library with the context block applied.

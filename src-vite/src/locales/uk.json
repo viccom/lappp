@@ -2094,7 +2094,7 @@
     "system_template_unsupported": "The current backend does not store a system template.",
     "response_spec": "Response spec (JSON)",
     "response_spec_hint": "A JSON object: the keys are the fields the model should return, the values describe them.",
-    "placeholders_hint": "Placeholders: {file_name} {exif_summary} {taken_at} {camera} {tags} {people} {people_count} {weekday} {time_of_day} {season} {location} {place} {gps} {comments} {title} {headline} {description} {artist} {copyright} {software} {camera_make} {camera_model} {lens} {exposure} {f_number} {focal_length} {iso} {flash} {dimensions} {duration} {rating} {favorite} {format} {file_size} {created_at} {modified_at}",
+    "placeholders_hint": "Placeholders: {file_name} {exif_summary} {taken_at} {camera} {tags} {people} {people_count} {weekday} {time_of_day} {season} {location} {place} {gps} {comments} {title} {headline} {description} {artist} {copyright} {software} {camera_make} {camera_model} {lens} {exposure} {f_number} {focal_length} {iso} {flash} {dimensions} {duration} {rating} {favorite} {format} {file_size} {created_at} {modified_at} {family}",
     "builtin": "Built-in",
     "builtin_readonly": "Built-in templates cannot be edited or deleted.",
     "builtin_edit_copy": "Saving creates a copy of this built-in template. The built-in template itself stays unchanged.",

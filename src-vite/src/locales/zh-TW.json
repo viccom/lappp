@@ -2104,7 +2104,7 @@
     "system_template_unsupported": "目前的後端不會儲存系統提示詞。",
     "response_spec": "回傳欄位約定（JSON）",
     "response_spec_hint": "一個 JSON 物件：鍵是模型需要回傳的欄位，值是對該欄位的說明。",
-    "placeholders_hint": "預留位置：{file_name} {exif_summary} {taken_at} {camera} {tags} {people} {people_count} {weekday} {time_of_day} {season} {location} {place} {gps} {comments} {title} {headline} {description} {artist} {copyright} {software} {camera_make} {camera_model} {lens} {exposure} {f_number} {focal_length} {iso} {flash} {dimensions} {duration} {rating} {favorite} {format} {file_size} {created_at} {modified_at}",
+    "placeholders_hint": "預留位置：{file_name} {exif_summary} {taken_at} {camera} {tags} {people} {people_count} {weekday} {time_of_day} {season} {location} {place} {gps} {comments} {title} {headline} {description} {artist} {copyright} {software} {camera_make} {camera_model} {lens} {exposure} {f_number} {focal_length} {iso} {flash} {dimensions} {duration} {rating} {favorite} {format} {file_size} {created_at} {modified_at} {family}",
     "builtin": "內建",
     "builtin_readonly": "內建範本不可編輯或刪除。",
     "builtin_edit_copy": "儲存後會建立一份內建範本的副本，內建範本本身保持不變。",

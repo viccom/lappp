@@ -2104,7 +2104,7 @@
     "system_template_unsupported": "当前后端不保存系统提示词。",
     "response_spec": "返回字段约定（JSON）",
     "response_spec_hint": "一个 JSON 对象：键是模型需要返回的字段，值是对该字段的说明。",
-    "placeholders_hint": "占位符：{file_name} {exif_summary} {taken_at} {camera} {tags} {people} {people_count} {weekday} {time_of_day} {season} {location} {place} {gps} {comments} {title} {headline} {description} {artist} {copyright} {software} {camera_make} {camera_model} {lens} {exposure} {f_number} {focal_length} {iso} {flash} {dimensions} {duration} {rating} {favorite} {format} {file_size} {created_at} {modified_at}",
+    "placeholders_hint": "占位符：{file_name} {exif_summary} {taken_at} {camera} {tags} {people} {people_count} {weekday} {time_of_day} {season} {location} {place} {gps} {comments} {title} {headline} {description} {artist} {copyright} {software} {camera_make} {camera_model} {lens} {exposure} {f_number} {focal_length} {iso} {flash} {dimensions} {duration} {rating} {favorite} {format} {file_size} {created_at} {modified_at} {family}",
     "builtin": "内置",
     "builtin_readonly": "内置模板不可编辑或删除。",
     "builtin_edit_copy": "保存后会创建一份内置模板的副本，内置模板本身保持不变。",

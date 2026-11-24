@@ -71,6 +71,7 @@ export const VL_PROMPT_PLACEHOLDERS = [
   '{file_size}',
   '{created_at}',
   '{modified_at}',
+  '{family}',
 ];
 
 /// Result fields with a translated label; other fields fall back to their key.

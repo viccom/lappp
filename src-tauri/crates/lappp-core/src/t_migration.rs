@@ -129,8 +129,7 @@ pub(crate) const TASKS_SCHEMA_SQL: &str = "
 pub(crate) fn ensure_tasks_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(TASKS_SCHEMA_SQL)
         .map_err(|e| format!("creating vl_tasks failed: {e}"))?;
-    if table_has_column(conn, "vl_runs", "run_id")?
-        && !table_has_column(conn, "vl_runs", "source")?
+    if table_has_column(conn, "vl_runs", "run_id")? && !table_has_column(conn, "vl_runs", "source")?
     {
         conn.execute(
             "ALTER TABLE vl_runs ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'",
@@ -383,6 +382,14 @@ fn get_migrations() -> Vec<Migration> {
         Migration {
             version: 32,
             description: "Seed the built-in image understanding template library",
+            sql: "",
+        },
+        // The built-in templates learned about the household card. The text
+        // changed, so the templates arrive as a new version; the rows the
+        // annotations and the scheduled tasks point at stay as they are.
+        Migration {
+            version: 33,
+            description: "Seed the built-in templates again, with the household card",
             sql: "",
         },
     ]
@@ -937,7 +944,8 @@ pub fn check_and_migrate(conn: &Connection) -> Result<(), String> {
                     tx.execute("ALTER TABLE atags ADD COLUMN source TEXT", [])
                         .map_err(|e| format!("Migration 23 failed: {e}"))?;
                 }
-                tx.pragma_update(None, "user_version", migration.version).map_err(|e| e.to_string())?;
+                tx.pragma_update(None, "user_version", migration.version)
+                    .map_err(|e| e.to_string())?;
                 tx.commit().map_err(|e| e.to_string())?;
             } else if migration.version == 21 {
                 migrate_tag_tree(conn)?;
@@ -993,6 +1001,11 @@ pub fn check_and_migrate(conn: &Connection) -> Result<(), String> {
                 // The built-in template library. Seeding is idempotent: a
                 // template that is already there keeps its row, its version
                 // and the annotations made with it.
+                seed_vl_template_library(conn)
+                    .map_err(|e| format!("Migration {} failed: {}", migration.version, e))?;
+            } else if migration.version == 33 {
+                // The built-in templates learned about the household card. The
+                // text changed, so they arrive as a new version row.
                 seed_vl_template_library(conn)
                     .map_err(|e| format!("Migration {} failed: {}", migration.version, e))?;
             } else if !migration.sql.trim().is_empty() {
@@ -1094,7 +1107,7 @@ mod vl_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))
                 .unwrap(),
-            32
+            33
         );
     }
 
@@ -1149,7 +1162,7 @@ mod vl_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))
                 .unwrap(),
-            32
+            33
         );
     }
 
@@ -1329,7 +1342,7 @@ mod vl_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))
                 .unwrap(),
-            32
+            33
         );
     }
 
@@ -1419,7 +1432,8 @@ mod vl_migration_tests {
         )
         .unwrap();
         // The user turned the template off.
-        conn.execute("UPDATE vl_templates SET enabled = 0", []).unwrap();
+        conn.execute("UPDATE vl_templates SET enabled = 0", [])
+            .unwrap();
 
         seed_templates(
             &conn,
@@ -1447,12 +1461,7 @@ mod vl_migration_tests {
             )
             .unwrap()
             .query_map([], |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                ))
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
             })
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
@@ -1549,7 +1558,7 @@ mod fts_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i32>(0))
                 .unwrap(),
-            32
+            33
         );
     }
 
@@ -1575,7 +1584,7 @@ mod fts_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i32>(0))
                 .unwrap(),
-            32
+            33
         );
     }
 }
@@ -1609,9 +1618,12 @@ mod album_filter_migration_tests {
     }
 
     fn visible(conn: &Connection) -> Vec<i64> {
-        conn.prepare(VISIBLE_FOLDERS).unwrap()
-            .query_map([], |row| row.get::<_, i64>(0)).unwrap()
-            .collect::<Result<Vec<_>, _>>().unwrap()
+        conn.prepare(VISIBLE_FOLDERS)
+            .unwrap()
+            .query_map([], |row| row.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
     }
 
     fn has_exclusion_index(conn: &Connection) -> bool {
@@ -1626,11 +1638,19 @@ mod album_filter_migration_tests {
         assert!(!has_exclusion_index(&conn));
         check_and_migrate(&conn).unwrap();
         assert!(has_exclusion_index(&conn));
-        assert_eq!(conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 32);
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            33
+        );
         // Running again changes nothing.
         check_and_migrate(&conn).unwrap();
         assert!(has_exclusion_index(&conn));
-        assert_eq!(conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 32);
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            33
+        );
     }
 
     #[test]
@@ -1646,10 +1666,20 @@ mod album_filter_migration_tests {
         check_and_migrate(&conn).unwrap();
         assert_eq!(visible(&conn), [3, 4]);
         let plan = format!("EXPLAIN QUERY PLAN {VISIBLE_FOLDERS}");
-        let details = conn.prepare(&plan).unwrap().query_map([], |row| row.get::<_, String>(3))
-            .unwrap().collect::<Result<Vec<_>, _>>().unwrap();
-        assert!(details.iter().any(|line| line.contains("idx_afolders_excluded_album")
-            && line.contains("album_id=?")), "{details:?}");
+        let details = conn
+            .prepare(&plan)
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            details
+                .iter()
+                .any(|line| line.contains("idx_afolders_excluded_album")
+                    && line.contains("album_id=?")),
+            "{details:?}"
+        );
     }
 
     #[test]
@@ -1712,7 +1742,7 @@ mod album_filter_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            32
+            33
         );
     }
 
@@ -1737,7 +1767,7 @@ mod album_filter_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            32
+            33
         );
     }
 
@@ -1765,7 +1795,7 @@ mod album_filter_migration_tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))
                 .unwrap(),
-            32
+            33
         );
     }
 
@@ -1795,7 +1825,11 @@ mod album_filter_migration_tests {
         assert_eq!(source_count, 1);
         // The compensation added the missing column and index.
         let columns: i64 = conn
-            .query_row("SELECT COUNT(*) FROM pragma_table_info('atags') WHERE name='source'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('atags') WHERE name='source'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(columns, 1);
         let index_count: i64 = conn
@@ -1807,13 +1841,18 @@ mod album_filter_migration_tests {
             .unwrap();
         assert_eq!(index_count, 1);
         assert_eq!(
-            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(),
-            32
+            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            33
         );
         // Idempotency: re-running on the migrated library changes nothing.
         check_and_migrate(&conn).unwrap();
         let columns_again: i64 = conn
-            .query_row("SELECT COUNT(*) FROM pragma_table_info('atags') WHERE name='source'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('atags') WHERE name='source'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(columns_again, 1);
     }
@@ -1833,12 +1872,17 @@ mod album_filter_migration_tests {
         .unwrap();
         check_and_migrate(&conn).unwrap();
         assert_eq!(
-            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(),
-            32
+            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            33
         );
         // Exactly one source column — the compensation did not duplicate it.
         let columns: i64 = conn
-            .query_row("SELECT COUNT(*) FROM pragma_table_info('atags') WHERE name='source'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('atags') WHERE name='source'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(columns, 1);
     }
