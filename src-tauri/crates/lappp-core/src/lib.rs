@@ -22,6 +22,7 @@ pub mod t_events;
 pub mod t_face;
 pub mod t_fts;
 pub mod t_heif;
+pub mod t_household;
 pub mod t_http;
 pub mod t_image;
 pub mod t_jpeg;
