@@ -37,10 +37,10 @@
 | 版本 | `0.4.0`（`src-tauri/Cargo.toml:4`、`src-vite/package.json:4`） |
 | DB schema | 迁移 **v32**（`crates/lappp-core/src/t_migration.rs` 的 `get_migrations()` 末尾；2026-11-23 更新）；上游 v23/v24 占位，fork 自有迁移重编号 v25–v30，v31 是 v0.4.0 同步的补偿迁移，v32 播种内置图片理解模板库。**新迁移从 v33 起** |
 | 连接 | WAL / `synchronous=NORMAL` / `foreign_keys=ON` / `busy_timeout=5s`（`t_sqlite.rs:11522`） |
-| 命令 | `#[tauri::command]` 共 262 处，**全部已注册**：桌面 `generate_handler!` 257 条（`src/main.rs`）+ 客户端 5 条；服务端桥接白名单 **234** 条（`crates/lappp-server/src/bridge_gen.rs`，另有断言校验三者严格划分） |
-| 前端规模 | `src/common` 48 个逻辑模块、`src/components` 74 个 `.vue`、`src/views` 7 个路由视图、`src/locales` 17 种语言（en/zh-CN 各 1676 个 leaf key，其余 1660，ko 1634） |
-| Rust 测试 | `cargo test --workspace` → **690 passed / 0 failed / 12 ignored**（core 605+11 ignored、壳 12、server 71、drag 2+1 ignored） |
-| 前端测试 | 52 个 `*.test.mjs` 共 **547 用例**，分 **36 个 `test:*` 域**，聚合 `npm run test` 全绿 |
+| 命令 | `#[tauri::command]` 共 265 处，**全部已注册**：桌面 `generate_handler!` 260 条（`src/main.rs`）+ 客户端 5 条；服务端桥接白名单 **237** 条（`crates/lappp-server/src/bridge_gen.rs`，另有断言校验三者严格划分） |
+| 前端规模 | `src/common` 50 个逻辑模块（21 个 `.js` + 29 个 `.ts`）、`src/components` 76 个 `.vue`、`src/views` 7 个路由视图、`src/locales` 17 种语言（en/zh-CN 各 1700 个 leaf key，多数 1676，vi/zh-TW 1684，ko 1650） |
+| Rust 测试 | `cargo test --workspace` → **715 passed / 0 failed / 12 ignored**（core 627+11 ignored、壳 12、server 72、drag 2+1 ignored） |
+| 前端测试 | 56 个 `*.test.mjs` 共 **595 用例**，分 **38 个 `test:*` 域**，聚合 `npm run test` 全绿 |
 | 类型门禁 | `npm run typecheck:gate` 基线 **0**（`src-vite/typecheck-baseline.json`）——已经是硬零错门禁 |
 | 支持格式 | **76** 个扩展名：图像 32（常规 14 + FFmpeg 14 + Affinity 4）、RAW 25（`x3f` 临时禁用）、视频 19（`crates/lappp-core/src/t_common.rs`） |
 | 推理 | ONNX Runtime `2.0.0-rc.10`，**仅 CPU**（全仓无任何 execution provider 配置）；嵌入维度由运行时探测（CLIP ViT-B/32 实测 512），不硬编码 |
@@ -53,7 +53,7 @@
 ```bash
 # 前端（src-vite/）
 npm run typecheck:gate      # vue-tsc 基线门禁：只许减少不许新增（--update 重新基线化）
-npm run test                # 聚合跑完 35 个 test:* 域
+npm run test                # 聚合跑完 38 个 test:* 域
 npm run test:crossrefs      # 命令 / i18n key / 快捷键 id 三方契约对账
 npm run build               # 桌面 bundle（src-vite/dist）
 
@@ -81,8 +81,8 @@ pwsh -File scripts/build-windows.ps1 -BuildProfile release   # 默认 release
 | 桌面命令（`#[tauri::command]`） | `src-tauri/src/t_*.rs`（壳）→ 实现落在 `src-tauri/crates/lappp-core/src/t_*.rs` |
 | 内核逻辑（SQLite / 索引 / AI / 文件操作） | `src-tauri/crates/lappp-core/src/`（**Tauri-free**，见下） |
 | HTTP 服务端（桥接 / SSE / 鉴权 / 媒体 / 静态站点） | `src-tauri/crates/lappp-server/src/`（`bridge_gen.rs` 是命令白名单真源） |
-| 前端可测逻辑（纯函数层） | `src-vite/src/common/`（48 个模块，**必须可测**） |
-| 前端 UI | `src-vite/src/components/`（74 个）、`src-vite/src/views/`（7 个） |
+| 前端可测逻辑（纯函数层） | `src-vite/src/common/`（50 个模块，**必须可测**） |
+| 前端 UI | `src-vite/src/components/`（76 个）、`src-vite/src/views/`（7 个） |
 | 前端状态 | `src-vite/src/stores/`：`configStore`（全局设置→localStorage）、`libraryStore`（每库状态→后端 `saveLibraryState`）、`uiStore`/`viewerSessionStore`（纯运行时，不落盘） |
 | 传输缝（桌面 ⇄ Web 切换点） | `src-vite/src/common/transport/`（`mode.js` 决定 tauri/http；`capabilities.js` 决定原生能力可见性） |
 | 导航→查询决策 | `src-vite/src/common/queryDispatch.js`（纯函数，Content.vue 只执行不决策） |
