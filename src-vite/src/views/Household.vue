@@ -1,334 +1,181 @@
 <template>
-  <div class="flex flex-col h-screen bg-base-100 text-base-content">
-    <!-- top bar: which graph, its root, whether it feeds the model -->
-    <div class="shrink-0 border-b border-base-content/10">
-      <div class="flex items-center gap-3 px-3 h-11 min-w-0">
-        <span class="text-sm font-medium shrink-0">{{ t('household.title') }}</span>
+  <div class="flex h-screen flex-col overflow-hidden bg-base-100 text-base-content" data-view="household">
+    <!-- top bar: which graph, whether it feeds the model, and where to start another -->
+    <header class="hh-bar">
+      <span class="hh-bar-title shrink-0">{{ t('household.title') }}</span>
+      <template v-if="current">
         <select
           v-if="households.length > 1"
-          class="select select-xs select-ghost max-w-48 font-medium shrink-0"
+          class="select select-xs select-ghost font-medium hh-graph-name"
+          data-role="graph-name"
           :value="currentIndex"
-          @change="switchGraph(valueOf($event))"
+          @change="switchGraph(Number(valueOf($event)))"
         >
-          <option v-for="(household, index) in households" :key="household.id" :value="index">
-            {{ household.name }}
-          </option>
+          <option v-for="(household, index) in households" :key="household.id" :value="index">{{ household.name }}</option>
         </select>
-        <span v-else-if="current" class="text-sm truncate min-w-0">{{ current.name }}</span>
-        <span v-if="rootName" class="text-xs text-base-content/50 truncate min-w-0">
-          {{ t('household.root') }}: {{ rootName }}
-        </span>
-
-        <div class="ml-auto flex items-center gap-3 shrink-0">
-          <label
-            v-if="current"
-            class="flex items-center gap-1.5 text-xs text-base-content/60 cursor-pointer whitespace-nowrap"
-          >
-            <input
-              type="checkbox"
-              class="toggle toggle-xs"
-              :checked="current.enabled"
-              @change="toggleEnabled(($event.target as HTMLInputElement).checked)"
-            />
-            {{ t('household.used_for_vision') }}
-          </label>
-          <TButton
-            :text="t('household.create_title')"
-            :buttonSize="'small'"
-            @click="openCreate"
+        <span v-else class="hh-graph-name" data-role="graph-name">{{ current.name }}</span>
+        <label class="hh-switch">
+          <input
+            type="checkbox"
+            class="toggle toggle-xs"
+            data-role="graph-enabled"
+            :checked="current.enabled"
+            @change="toggleEnabled(checked($event))"
           />
-        </div>
-      </div>
-    </div>
+          <span>{{ t('household.used_for_vision') }}</span>
+        </label>
+      </template>
 
-    <!-- no graph yet: say what a graph is, and who is there to build one from -->
-    <div v-if="!households.length" class="flex-1 overflow-y-auto p-6">
-      <div class="mx-auto max-w-xl rounded-box border border-base-content/10 bg-base-200/40 p-5 flex flex-col gap-3">
-        <div class="text-base font-medium">{{ t('household.no_graph_yet') }}</div>
-        <div class="text-sm text-base-content/60 leading-6">{{ t('household.no_graph_hint') }}</div>
-
-        <div v-if="namedFaces.length" class="flex flex-col gap-1.5">
-          <div class="text-xs text-base-content/40">
-            {{ t('household.people_available', { count: namedFaces.length }) }}
-          </div>
-          <div class="flex flex-wrap gap-1.5">
-            <span
-              v-for="entry in namedFaces"
-              :key="entry.name"
-              class="inline-flex items-center gap-1.5 text-sm px-2 py-0.5 rounded-box bg-base-300/60"
-            >
-              {{ entry.name }}
-              <span class="text-[11px] text-base-content/40">{{ entry.count ?? '' }}</span>
-            </span>
-          </div>
-        </div>
-        <div v-else class="text-sm text-error">{{ t('household.no_named_faces') }}</div>
-
-        <div>
-          <TButton
-            :text="t('household.create_title')"
-            buttonClasses="btn-primary"
-            :disabled="!namedFaces.length"
-            @click="openCreate"
-          />
-        </div>
-      </div>
-    </div>
-
-    <!-- the graph: the people on the left, the rows in the middle -->
-    <div v-else class="flex flex-1 min-h-0">
-      <div class="w-60 shrink-0 border-r border-base-content/10 overflow-y-auto px-1 py-2 flex flex-col gap-0.5">
-        <div class="px-2 py-1 text-[11px] uppercase tracking-wider text-base-content/40">
-          {{ t('household.members') }} ({{ memberNodes.length }})
-        </div>
+      <div class="ml-auto flex shrink-0 items-center gap-1">
         <button
-          v-for="node in memberNodes"
-          :key="node.id"
+          v-if="current && unjoined.length"
           type="button"
-          class="sidebar-item gap-2 text-sm"
-          :class="selectedNode?.id === node.id ? 'sidebar-item-selected' : 'sidebar-item-hover'"
-          @click="selectNode(node.id)"
+          class="hh-bar-btn"
+          data-role="add-people"
+          @click="showAdd = true"
         >
-          <span class="w-6 h-6 rounded-full bg-base-300/70 shrink-0 flex items-center justify-center">
-            <IconPerson class="w-3.5 h-3.5 text-base-content/40" />
-          </span>
-          <span class="truncate">{{ nameOf(node.id) }}</span>
-          <span
-            v-if="node.id === current?.rootNodeId"
-            class="ml-auto shrink-0 text-[10px] px-1 rounded-box bg-primary/15 text-primary"
-          >{{ t('household.root') }}</span>
-          <span v-else-if="node.term" class="ml-auto shrink-0 text-[11px] text-base-content/40">
-            {{ node.term }}
-          </span>
+          <IconAdd class="w-3.5 h-3.5" />{{ t('household.add_people') }}
         </button>
-
-        <template v-if="unjoined.length">
-          <div class="divider my-1"></div>
-          <div class="px-2 py-1 text-[11px] uppercase tracking-wider text-base-content/40">
-            {{ t('household.not_joined') }} ({{ unjoined.length }})
-          </div>
-          <button
-            v-for="entry in unjoined"
-            :key="entry.name"
-            type="button"
-            class="sidebar-item gap-2 text-sm text-base-content/60"
-            @click="join(entry.name)"
-          >
-            <span class="w-6 shrink-0 text-center text-base-content/40">+</span>
-            <span class="truncate">{{ entry.name }}</span>
-            <span class="ml-auto shrink-0 text-[11px] text-base-content/30">{{ entry.count ?? '' }}</span>
-          </button>
-        </template>
+        <button v-if="current" type="button" class="hh-bar-btn" data-role="new-graph" @click="showNew = true">
+          <IconAdd class="w-3.5 h-3.5" />{{ t('household.new') }}
+        </button>
+        <TButton
+          v-if="current"
+          :icon="IconSettings"
+          :buttonSize="'small'"
+          :tooltip="t('household.graph_settings')"
+          data-role="graph-settings"
+          @click="openSettings"
+        />
       </div>
+    </header>
 
-      <div
-        class="flex-1 min-w-0 overflow-hidden relative cursor-grab active:cursor-grabbing"
-        @wheel.prevent="onWheel"
-        @mousedown="onPanStart"
-      >
-        <svg
-          :viewBox="viewBox"
-          class="w-full h-full select-none"
-          preserveAspectRatio="xMidYMid meet"
-          @mousedown.self="clearSelection"
-        >
-          <g :transform="`translate(${offset.x} ${offset.y}) scale(${zoom})`">
-            <!-- the links first, so the people are drawn over their ends -->
-            <line
-              v-for="drawn in drawnEdges"
-              :key="drawn.key"
-              :x1="drawn.x1" :y1="drawn.y1" :x2="drawn.x2" :y2="drawn.y2"
-              :stroke-width="drawn.edge.kind === 'spouse' ? 2.5 : 1.5"
-              :stroke-dasharray="drawn.edge.kind === 'social' ? '5 4' : undefined"
-              :class="[
-                drawn.edge.kind === 'spouse' ? 'stroke-primary/50' : 'stroke-base-content/30',
-                touchesSelected(drawn.edge) ? '!stroke-primary' : '',
-              ]"
-            />
-            <text
-              v-for="drawn in drawnEdges.filter((entry) => entry.edge.kind === 'social')"
-              :key="`label-${drawn.key}`"
-              :x="(drawn.x1 + drawn.x2) / 2" :y="(drawn.y1 + drawn.y2) / 2 - 5"
-              text-anchor="middle"
-              class="fill-base-content/50 text-[11px]"
-            >{{ t(`household.social_label.${drawn.edge.label}`) }}</text>
-
-            <g
-              v-for="node in memberNodes"
-              :key="node.id"
-              class="cursor-pointer"
-              @click.stop="selectNode(node.id)"
-              @mousedown.stop
-            >
-              <circle
-                :cx="xOf(node.id)" :cy="yOf(node.id)" :r="NODE_R"
-                :class="selectedNode?.id === node.id
-                  ? 'fill-primary/20 stroke-primary'
-                  : 'fill-base-200 stroke-base-content/30'"
-                stroke-width="2"
-              />
-              <text
-                :x="xOf(node.id)" :y="yOf(node.id) + NODE_R + 16"
-                text-anchor="middle"
-                class="fill-base-content text-[12px]"
-              >{{ nameOf(node.id) }}</text>
-              <text
-                v-if="node.id === current?.rootNodeId"
-                :x="xOf(node.id)" :y="yOf(node.id) - NODE_R - 7"
-                text-anchor="middle"
-                class="fill-primary text-[10px]"
-              >{{ t('household.root') }}</text>
-            </g>
-          </g>
-        </svg>
-
-        <div class="absolute right-3 bottom-2 text-[11px] text-base-content/30 pointer-events-none">
-          {{ t('household.canvas_hint') }}
-        </div>
+    <!-- no graph yet: a graph is started from a person, so pick one -->
+    <main v-if="!current" class="hh-start" data-role="root-picker">
+      <div class="hh-start-inner">
+        <h2 class="hh-start-title">{{ t('household.pick_root_title') }}</h2>
+        <p class="hh-start-hint">{{ t('household.pick_root_hint') }}</p>
+        <PersonPicker
+          grid
+          :rows="rootChoices"
+          :placeholder="t('household.pick_root_search')"
+          :empty-text="t('household.no_named_faces')"
+          @pick="openGraphOf"
+        />
       </div>
-    </div>
+    </main>
 
-    <!-- the person that is selected: who they are, and the links to the others -->
-    <div v-if="selectedNode" class="shrink-0 border-t border-base-content/10 px-3 py-2 flex flex-col gap-1.5">
-      <div class="flex items-center gap-2 flex-wrap">
-        <span class="text-sm font-medium">{{ nameOf(selectedNode.id) }}</span>
-        <span v-if="selectedNode.term" class="text-xs text-base-content/40">{{ selectedNode.term }}</span>
+    <!-- the graph: the tree in the middle, the person that is selected on the right -->
+    <main v-else class="hh-body">
+      <HouseholdCanvas
+        :people="placed"
+        :lines="lines"
+        :bounds="bounds"
+        :selected-id="selectedNodeId"
+        :bare="shownEdges.length === 0"
+        @select="selectNode"
+        @clear="clearSelection"
+      />
+      <aside class="hh-side" data-role="side">
+        <PersonPanel
+          v-if="selectedNode"
+          :node="selectedNode"
+          :name="nameOf(selectedNode.id)"
+          :term="selectedNode.term ?? null"
+          :thumbnail="thumbnailOf(selectedNode)"
+          :is-root="selectedNode.id === current.rootNodeId"
+          :groups="linkGroups"
+          :candidates="candidatesByGroup"
+          :members="membersById"
+          :open-group="pickerGroup"
+          :save-state="saveState"
+          :elsewhere="elsewhereSelected"
+          @close="clearSelection"
+          @save="save"
+          @select="selectNode"
+          @add-link="addLink"
+          @remove-link="removeLink"
+          @toggle-picker="togglePicker"
+          @make-root="makeRoot"
+          @remove-person="removePerson"
+        />
+        <MembersPanel
+          v-else
+          :name="current.name"
+          :members="placed"
+          :links="shownEdges.length"
+          :unjoined="unjoined"
+          @select="selectNode"
+          @join="pickToJoin"
+        />
+      </aside>
+    </main>
 
-        <div class="ml-auto flex items-center gap-2 flex-wrap">
-          <span class="text-xs text-base-content/50">{{ t('household.gender') }}</span>
-          <select
-            class="select select-xs"
-            :value="editGender"
-            @change="editGender = valueOf($event)"
-          >
-            <option value="unknown">{{ t('household.gender_unknown') }}</option>
-            <option value="male">{{ t('household.gender_male') }}</option>
-            <option value="female">{{ t('household.gender_female') }}</option>
-          </select>
-          <span class="text-xs text-base-content/50">{{ t('household.birth_year') }}</span>
+    <!-- another graph: it starts from a person too, and somebody who has one opens theirs -->
+    <ModalDialog v-if="showNew" :title="t('household.new')" :width="560" @cancel="showNew = false">
+      <p class="mb-2 text-xs leading-5 text-base-content/55">{{ t('household.new_graph_hint') }}</p>
+      <PersonPicker
+        grid
+        :rows="rootChoices"
+        :placeholder="t('household.pick_root_search')"
+        :empty-text="t('household.no_named_faces')"
+        @pick="openGraphOf"
+      />
+    </ModalDialog>
+
+    <!-- bring people in -->
+    <ModalDialog v-if="showAdd" :title="t('household.add_people')" :width="460" @cancel="showAdd = false">
+      <p class="mb-2 text-xs leading-5 text-base-content/55">{{ t('household.add_people_hint') }}</p>
+      <PersonPicker
+        :rows="addChoices"
+        :placeholder="t('household.search_names')"
+        :empty-text="t('household.add_people_empty')"
+        @pick="pickToJoin"
+      />
+    </ModalDialog>
+
+    <!-- the graph itself: its name, the albums it applies to, and the end of it -->
+    <ModalDialog v-if="showSettings && current" :title="t('household.graph_settings')" :width="440" @cancel="showSettings = false">
+      <div class="flex flex-col gap-3">
+        <label class="flex flex-col gap-1">
+          <span class="hh-label">{{ t('household.graph_name') }}</span>
           <input
             type="text"
-            class="input input-xs w-20"
-            :class="yearValid ? '' : 'input-error'"
-            :value="editBirthYear"
-            @input="editBirthYear = valueOf($event)"
+            class="input input-sm"
+            data-role="settings-name"
+            :value="draftName"
+            @input="draftName = valueOf($event)"
+            @keydown.enter.prevent="saveSettings"
           />
-          <TButton
-            :text="t('household.save_details')"
-            :buttonSize="'small'"
-            :disabled="!detailsDirty || !yearValid"
-            @click="saveDetails"
-          />
-          <TButton
-            v-if="selectedNode.id !== current?.rootNodeId"
-            :text="t('household.make_root')"
-            :buttonSize="'small'"
-            @click="makeRoot"
-          />
+        </label>
+        <div class="flex flex-col gap-1">
+          <span class="hh-label">{{ t('household.albums') }}</span>
+          <div class="flex max-h-40 flex-col overflow-y-auto rounded-box border border-base-content/10 p-1">
+            <label v-for="album in albums" :key="album.id" class="flex cursor-pointer items-center gap-2 px-2 py-1 text-sm">
+              <input
+                type="checkbox"
+                class="checkbox checkbox-xs"
+                data-role="settings-album"
+                :data-album-id="album.id"
+                :checked="draftAlbums.includes(album.id)"
+                @change="toggleAlbum(album.id, checked($event))"
+              />
+              <span class="truncate">{{ album.name }}</span>
+            </label>
+          </div>
+          <span class="text-[11px] text-base-content/40">{{ t('household.albums_hint') }}</span>
         </div>
-      </div>
-
-      <div class="flex items-center gap-x-5 gap-y-1.5 flex-wrap">
-        <div v-for="group in linkGroups" :key="group.kind" class="flex items-center gap-1.5 flex-wrap">
-          <span class="text-[11px] text-base-content/40">{{ t(group.labelKey) }}</span>
-          <span
-            v-for="link in group.links"
-            :key="link.key"
-            class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-box bg-base-300/60"
-          >
-            {{ nameOf(link.otherId) }}<template v-if="link.word">（{{ t(`household.social_label.${link.word}`) }}）</template>
-            <button type="button" class="text-base-content/40 hover:text-error" @click="removeLink(link)">×</button>
-          </span>
-          <template v-if="candidatesFor(group.kind).length">
-            <select
-              v-if="group.kind === 'social'"
-              class="select select-xs"
-              :value="socialLabel"
-              @change="socialLabel = valueOf($event)"
-            >
-              <option v-for="label in SOCIAL_LABELS" :key="label" :value="label">
-                {{ t(`household.social_label.${label}`) }}
-              </option>
-            </select>
-            <SearchableSelect
-              :options="candidatesFor(group.kind).map((candidate) => ({ value: candidate, label: nameOf(candidate) }))"
-              :placeholder="t('household.add')"
-              :searchPlaceholder="t('household.search_names')"
-              :emptyText="t('household.no_candidates')"
-              @update:modelValue="(id) => addLink(group.kind, Number(id))"
-            />
-          </template>
-        </div>
-      </div>
-    </div>
-
-    <!-- create a graph. A child of the page itself: it must open whether or
-         not anybody is selected, and whether or not a graph exists. -->
-    <ModalDialog
-      v-if="showCreate"
-      :title="t('household.create_title')"
-      :width="460"
-      @cancel="showCreate = false"
-    >
-      <div class="flex flex-col gap-1">
-        <div class="text-xs text-base-content/50">{{ t('household.name') }}</div>
-        <input
-          type="text"
-          class="input input-sm w-full"
-          :value="draftName"
-          :placeholder="t('household.name_hint')"
-          @input="draftName = valueOf($event)"
-        />
-
-        <div class="text-xs text-base-content/50 mt-2">{{ t('household.root_choice') }}</div>
-        <select class="select select-sm w-full" :value="draftRoot" @change="draftRoot = valueOf($event)">
-          <option value="">{{ t('household.choose_one') }}</option>
-          <option v-for="entry in namedFaces" :key="entry.name" :value="entry.name">{{ entry.name }}</option>
-        </select>
-
-        <div class="text-xs text-base-content/50 mt-2">{{ t('household.members_choice') }}</div>
-        <div class="max-h-36 overflow-y-auto rounded-box border border-base-content/10 p-1 flex flex-col gap-0.5">
-          <label
-            v-for="entry in namedFaces"
-            :key="entry.name"
-            class="flex items-center gap-2 text-sm px-1 py-0.5 cursor-pointer"
-          >
-            <input
-              type="checkbox"
-              class="checkbox checkbox-xs"
-              :checked="draftMembers.includes(entry.name)"
-              @change="toggleDraftMember(entry.name, ($event.target as HTMLInputElement).checked)"
-            />
-            <span class="truncate">{{ entry.name }}</span>
-          </label>
-        </div>
-
-        <div class="text-xs text-base-content/50 mt-2">{{ t('household.albums') }}</div>
-        <div class="max-h-28 overflow-y-auto rounded-box border border-base-content/10 p-1 flex flex-col gap-0.5">
-          <label
-            v-for="album in albumChoices"
-            :key="album.id"
-            class="flex items-center gap-2 text-sm px-1 py-0.5 cursor-pointer"
-          >
-            <input
-              type="checkbox"
-              class="checkbox checkbox-xs"
-              :checked="draftAlbums.includes(album.id)"
-              @change="toggleDraftAlbum(album.id, ($event.target as HTMLInputElement).checked)"
-            />
-            <span class="truncate">{{ album.name }}</span>
-          </label>
-        </div>
-        <div class="text-[11px] text-base-content/40 leading-4">{{ t('household.albums_hint') }}</div>
-
-        <div class="flex justify-end gap-2 mt-3">
-          <TButton :text="t('msgbox.cancel')" @click="showCreate = false" />
-          <TButton
-            :text="t('household.create_confirm')"
-            buttonClasses="btn-primary"
-            :disabled="!canCreate"
-            @click="submitCreate"
-          />
+        <div class="flex items-center justify-between gap-2 pt-1">
+          <button
+            type="button"
+            class="t-button-default"
+            :class="{ 'hh-btn-danger': deleting }"
+            data-role="delete-graph"
+            @click="askDelete"
+          >{{ deleting ? t('household.delete_graph_confirm', { name: current.name }) : t('household.delete_graph') }}</button>
+          <button type="button" class="t-button-primary" data-role="settings-save" @click="saveSettings">
+            {{ t('household.save_details') }}
+          </button>
         </div>
       </div>
     </ModalDialog>
@@ -338,352 +185,642 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { IconPerson } from '@/common/icons';
+import { IconAdd, IconSettings } from '@/common/icons';
 import ModalDialog from '@/components/ModalDialog.vue';
-import SearchableSelect from '@/components/SearchableSelect.vue';
 import TButton from '@/components/TButton.vue';
-import { useHousehold } from '@/composables/useHousehold';
+import HouseholdCanvas from '@/components/household/HouseholdCanvas.vue';
+import MembersPanel from '@/components/household/MembersPanel.vue';
+import PersonPanel from '@/components/household/PersonPanel.vue';
+import PersonPicker from '@/components/household/PersonPicker.vue';
 import {
   createHousehold,
+  deleteHousehold,
   importHouseholdNodes,
   listAlbumChoices,
+  listPersons,
   setHouseholdEdges,
   setHouseholdMembers,
   updateHousehold,
   upsertHouseholdNode,
 } from '@/common/householdApi';
 import {
-  LAYOUT_GAP,
-  LAYOUT_MARGIN,
-  SOCIAL_LABELS,
-  birthYearOf,
+  LINK_GROUPS,
+  drawLines,
   edgePayload,
   facesOutsideGraph,
   groupLinks,
-  layoutPositions,
+  layoutTree,
   linkKey,
   makeLink,
+  nodeForName,
   nodeWithDetails,
+  personIdIn,
+  wouldCloseParentCircle,
 } from '@/common/householdGraph';
+import { isAutoPersonName } from '@/common/personMerge';
+import { listen } from '@/common/transport';
+import { useToast } from '@/common/toast';
+import { useHousehold } from '@/composables/useHousehold';
+
+/** An object of the graph, as the overview gives it. */
+interface GraphObject {
+  id: number;
+  [field: string]: any;
+}
+
+/** A link between two of them. */
+interface GraphEdge {
+  kind: string;
+  fromNode: number;
+  toNode: number;
+  [field: string]: any;
+}
 
 const { t } = useI18n();
+const toast = useToast();
 const { overview, faceNames, reload, nameOf } = useHousehold();
-
-const NODE_R = 28;
-
-const currentIndex = ref(0);
-const selectedNodeId = ref<number | null>(null);
-const socialLabel = ref('classmate');
-const zoom = ref(1);
-const offset = ref({ x: 0, y: 0 });
 
 /** The value of whatever the user just changed. */
 function valueOf(event: Event): string {
   return (event.target as HTMLInputElement | HTMLSelectElement).value;
 }
 
+function checked(event: Event): boolean {
+  return (event.target as HTMLInputElement).checked;
+}
+
 // ---- what the page shows ----
 
-const households = computed<any[]>(() => overview.value?.households ?? []);
-const current = computed<any>(() => households.value[currentIndex.value] ?? null);
+/** Everybody the user named, with the face the library keeps for them. */
+const persons = ref<Array<{ id: number; name: string; count?: number; thumbnail?: string | null }>>([]);
+const currentIndex = ref(0);
+const selectedNodeId = ref<number | null>(null);
+/** The group whose list of people is open, or null. */
+const pickerGroup = ref<string | null>(null);
+const saveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-const memberNodes = computed<any[]>(() => {
+const households = computed<GraphObject[]>(() => overview.value?.households ?? []);
+const current = computed<GraphObject>(() => households.value[currentIndex.value] ?? null);
+const allNodes = computed<GraphObject[]>(() => overview.value?.nodes ?? []);
+const memberNodes = computed<GraphObject[]>(() => {
   const members = new Set<number>(current.value?.memberIds ?? []);
-  return (overview.value?.nodes ?? []).filter((node: any) => members.has(node.id));
+  return allNodes.value.filter((node: GraphObject) => members.has(node.id));
 });
-
-const rootName = computed(() =>
-  current.value?.rootNodeId != null ? nameOf(current.value.rootNodeId) : '',
-);
-
-/** Every link that touches a member: the set the library replaces as a whole. */
-const graphEdges = computed<any[]>(() => {
+/** Every link that touches the graph: the set the library replaces as a whole. */
+const graphEdges = computed<GraphEdge[]>(() => {
   const members = new Set<number>(current.value?.memberIds ?? []);
   return (overview.value?.edges ?? []).filter(
-    (edge: any) => members.has(edge.fromNode) || members.has(edge.toNode),
+    (edge: GraphEdge) => members.has(edge.fromNode) || members.has(edge.toNode),
   );
 });
-
-const selectedNode = computed(
-  () => memberNodes.value.find((node: any) => node.id === selectedNodeId.value) ?? null,
+/**
+ * The links that are drawn and listed: between two people of the graph.
+ *
+ * A link belongs to two people, not to a graph. One that leads out of the
+ * graph — to somebody who was taken out of it but is in another one — stays
+ * in the library and goes into every batch that is written; it is only out of
+ * sight here.
+ */
+const shownEdges = computed<GraphEdge[]>(() => {
+  const members = new Set<number>(current.value?.memberIds ?? []);
+  return graphEdges.value.filter((edge: GraphEdge) => members.has(edge.fromNode) && members.has(edge.toNode));
+});
+const selectedNode = computed<GraphObject | null>(
+  () => memberNodes.value.find((node: GraphObject) => node.id === selectedNodeId.value) ?? null,
 );
 
-/** The names a graph can be built from: the ones the user gave the faces. */
-const namedFaces = computed<any[]>(() => faceNames.value);
+/** The face of a person: of the first of their names the library keeps a face for. */
+const faceOf = (name: string) => persons.value.find((person) => person.name === name)?.thumbnail ?? null;
+const thumbnailOf = (node: GraphObject | null) => {
+  for (const name of node?.anchors ?? []) {
+    const face = faceOf(name);
+    if (face) return face;
+  }
+  return null;
+};
 
-/** The faces that could still join: new people, and people in another graph. */
+/** The people who could still join: new ones, and people in nobody's graph. */
 const unjoined = computed(() =>
   facesOutsideGraph(
-    faceNames.value,
-    overview.value?.nodes ?? [],
+    faceNames.value as Array<{ name: string; count?: number }>,
+    allNodes.value,
     current.value?.memberIds ?? [],
-  ),
+  ).map((entry) => ({
+    ...entry,
+    thumbnail: faceOf(entry.name),
+  })),
 );
 
-// ---- the canvas ----
+// ---- the picture ----
 
-const layout = computed(() => layoutPositions(memberNodes.value, graphEdges.value));
+const layout = computed(() => layoutTree(memberNodes.value, shownEdges.value, { rootId: current.value?.rootNodeId ?? null }));
+const lines = computed(() => drawLines(layout.value.pos, shownEdges.value));
+const placed = computed(() =>
+  memberNodes.value.map((node: GraphObject) => {
+    const place = layout.value.pos.get(node.id) ?? { x: 0, y: 0, row: 0 };
+    return {
+      id: node.id,
+      name: nameOf(node.id),
+      term: node.term ?? null,
+      gender: node.gender ?? 'unknown',
+      thumbnail: thumbnailOf(node),
+      isRoot: node.id === current.value?.rootNodeId,
+      x: place.x,
+      y: place.y,
+      row: place.row,
+    };
+  }),
+);
+const bounds = computed(() => {
+  const reach = layout.value.bounds;
+  // Air for the badge of the root, which stands above their card: the same
+  // amount below, so the people stay in the middle.
+  return reach ? { ...reach, top: reach.top - 22, bottom: reach.bottom + 22 } : null;
+});
+const membersById = computed<Record<number, GraphObject>>(() =>
+  Object.fromEntries(placed.value.map((person): [number, GraphObject] => [person.id, person])),
+);
 
-function xOf(id: number): number {
-  return layout.value.pos.get(id)?.x ?? LAYOUT_MARGIN;
-}
+const linkGroups = computed(() => (selectedNode.value ? groupLinks(shownEdges.value, selectedNode.value.id) : []));
 
-function yOf(id: number): number {
-  return (layout.value.pos.get(id)?.row ?? 0) * LAYOUT_GAP + LAYOUT_MARGIN;
-}
-
-/** The links between two people of the graph, as lines on the canvas. */
-const drawnEdges = computed(() => {
-  const members = new Set(memberNodes.value.map((node: any) => node.id));
-  return graphEdges.value
-    .filter((edge: any) => members.has(edge.fromNode) && members.has(edge.toNode))
-    .map((edge: any) => ({
-      key: linkKey(edge),
-      edge,
-      x1: xOf(edge.fromNode),
-      y1: yOf(edge.fromNode),
-      x2: xOf(edge.toNode),
-      y2: yOf(edge.toNode),
+/** For each group, the people a new link of that group could point at. */
+const candidatesByGroup = computed<Record<string, Array<Record<string, any>>>>(() => {
+  const node = selectedNode.value;
+  if (!node) return {};
+  const made: Record<string, Set<number>> = Object.fromEntries(
+    LINK_GROUPS.map((group): [string, Set<number>] => [group.kind, new Set(groupLinks(shownEdges.value, node.id)
+      .find((entry) => entry.kind === group.kind)?.links.map((link) => link.otherId) ?? [])]),
+  );
+  const rows = (kind: string) => {
+    const linked: Set<number> = made[kind];
+    const inside = memberNodes.value
+      .filter((other: GraphObject) => other.id !== node.id && !linked.has(other.id))
+      // The library refuses a parent link that closes a circle: do not offer it.
+      .filter((other: GraphObject) => !(kind === 'parents' && wouldCloseParentCircle(graphEdges.value, other.id, node.id)))
+      .filter((other: GraphObject) => !(kind === 'children' && wouldCloseParentCircle(graphEdges.value, node.id, other.id)))
+      .map((other: GraphObject) => ({
+        key: `node-${other.id}`,
+        nodeId: other.id,
+        name: nameOf(other.id),
+        thumbnail: thumbnailOf(other),
+        hint: other.term ?? '',
+      }));
+    const outside = unjoined.value.map((entry) => ({
+      key: `name-${entry.name}`,
+      nodeId: null,
+      name: entry.name,
+      thumbnail: entry.thumbnail,
+      hint: t('household.will_join'),
     }));
-});
-
-const viewBox = computed(() => {
-  const xs = memberNodes.value.map((node: any) => xOf(node.id));
-  const minX = Math.min(...xs, LAYOUT_MARGIN) - LAYOUT_MARGIN;
-  const maxX = Math.max(...xs, LAYOUT_MARGIN) + LAYOUT_MARGIN;
-  // A small graph is not blown up to fill the window.
-  const width = Math.max(760, maxX - minX);
-  const rows = Math.max(2, layout.value.rows.length);
-  const left = minX - (width - (maxX - minX)) / 2;
-  return `${left} 0 ${width} ${rows * LAYOUT_GAP + LAYOUT_MARGIN}`;
-});
-
-function touchesSelected(edge: any): boolean {
-  return selectedNodeId.value != null
-    && (edge.fromNode === selectedNodeId.value || edge.toNode === selectedNodeId.value);
-}
-
-function selectNode(id: number) {
-  selectedNodeId.value = id;
-}
-
-function clearSelection() {
-  selectedNodeId.value = null;
-}
-
-function onWheel(event: WheelEvent) {
-  const next = zoom.value * (event.deltaY > 0 ? 0.9 : 1.1);
-  zoom.value = Math.min(2.5, Math.max(0.4, next));
-}
-
-let panning: { x: number; y: number; startX: number; startY: number } | null = null;
-
-function onPanStart(event: MouseEvent) {
-  // A click on a person must not start a drag of the canvas.
-  if (event.target !== event.currentTarget) return;
-  panning = { x: offset.value.x, y: offset.value.y, startX: event.clientX, startY: event.clientY };
-  window.addEventListener('mousemove', onPanMove);
-  window.addEventListener('mouseup', onPanEnd);
-}
-
-function onPanMove(event: MouseEvent) {
-  if (!panning) return;
-  offset.value = {
-    x: panning.x + (event.clientX - panning.startX),
-    y: panning.y + (event.clientY - panning.startY),
+    return [...inside, ...outside];
   };
-}
+  const byGroup: Record<string, Array<Record<string, any>>> = {};
+  for (const group of LINK_GROUPS) byGroup[group.kind] = rows(group.kind);
+  return byGroup;
+});
 
-function onPanEnd() {
-  panning = null;
-  window.removeEventListener('mousemove', onPanMove);
-  window.removeEventListener('mouseup', onPanEnd);
-}
+// ---- one write at a time ----
 
-onBeforeUnmount(onPanEnd);
+// Two changes made in quick succession must both land, in that order, and no
+// reading back may come between a write and the one after it.
+let tail: Promise<unknown> = Promise.resolve();
 
-// ---- the links of the selected person ----
-
-const linkGroups = computed(() =>
-  selectedNode.value ? groupLinks(graphEdges.value, selectedNode.value.id) : [],
-);
-
-/** The people a new link of this group could point at. */
-function candidatesFor(kind: string): number[] {
-  if (!selectedNode.value) return [];
-  const group = linkGroups.value.find((entry) => entry.kind === kind);
-  const linked = new Set<number>(group?.links.map((link: any) => link.otherId) ?? []);
-  return memberNodes.value
-    .map((node: any) => node.id)
-    .filter((id: number) => id !== selectedNode.value?.id && !linked.has(id));
-}
-
-async function addLink(kind: string, otherId: number) {
-  if (!selectedNode.value) return;
-  const draft = makeLink(kind, selectedNode.value.id, otherId, socialLabel.value);
-  if (!draft) return;
-  await writeEdges([...graphEdges.value.map(edgePayload), draft]);
-}
-
-async function removeLink(link: any) {
-  await writeEdges(graphEdges.value.filter((edge: any) => linkKey(edge) !== link.key).map(edgePayload));
+function queued<T>(job: () => Promise<T>): Promise<T> {
+  const run = tail.then(job, job);
+  tail = run.then(() => undefined, () => undefined);
+  return run;
 }
 
 /**
- * Write the links of the graph as one batch, then read it back: the library
- * normalises them, and the page shows what it actually holds.
- *
- * The command returns nothing either way, so the wrapper says true when the
- * library took the batch; anything else leaves the page as it was.
+ * A graph as the page holds it now. Inside a queued job this is after whatever
+ * was written before has been read back: a list of members taken when the user
+ * clicked would be from before that, and writing it would undo it.
  */
-async function writeEdges(edges: any[]) {
+const householdNow = (id: number) => households.value.find((entry: GraphObject) => entry.id === id) ?? null;
+
+// ---- the links ----
+
+async function addLink({ group, nodeId, name, label }: { group: string; nodeId: number | null; name: string; label?: string }) {
+  const node = selectedNode.value;
   const household = current.value;
-  if (!household) return;
-  const written = await setHouseholdEdges(household.id, edges);
-  if (written !== true) return;
-  await reload();
+  if (!node || !household) return;
+  const opened = pickerGroup.value;
+  const linked = await queued(async () => {
+    let other = nodeId;
+    // A name that is in nobody's graph yet comes in first.
+    if (other == null) {
+      const ids = await importHouseholdNodes([name]);
+      if (!Array.isArray(ids) || !ids.length) return false;
+      const now = householdNow(household.id);
+      if (!now) return false;
+      const joined = await setHouseholdMembers(household.id, [...new Set([...(now.memberIds ?? []), ...ids.map(Number)])]);
+      if (joined !== true) return false;
+      [other] = ids.map(Number);
+      // They are a member now, and the library replaces every link that
+      // touches a member. Read the graph again before the batch is made, so
+      // the links they already have elsewhere are in it, and not wiped out.
+      await reload();
+    }
+    const draft = makeLink(group, node.id, Number(other), label);
+    if (!draft) return false;
+    const written = await setHouseholdEdges(household.id, [...graphEdges.value.map(edgePayload), draft]);
+    if (written !== true) {
+      toast.error(t('household.link_refused'));
+      return false;
+    }
+    await reload();
+    return true;
+  });
+  if (!linked && nodeId == null) toast.error(t('household.save_failed'));
+  if (linked && pickerGroup.value === opened) pickerGroup.value = null;
 }
 
-// ---- who the person is ----
+async function removeLink(link: GraphObject) {
+  const household = current.value;
+  if (!household) return;
+  await queued(async () => {
+    const written = await setHouseholdEdges(household.id, graphEdges.value.filter((edge) => linkKey(edge) !== link.key).map(edgePayload));
+    if (written !== true) {
+      toast.error(t('household.link_refused'));
+      return;
+    }
+    await reload();
+  });
+}
 
-const editGender = ref('unknown');
-const editBirthYear = ref('');
+function togglePicker(group: string) {
+  pickerGroup.value = pickerGroup.value === group ? null : group;
+}
 
-watch(
-  selectedNode,
-  (node) => {
-    editGender.value = node?.gender || 'unknown';
-    editBirthYear.value = node?.birthDate ? String(birthYearOf(node.birthDate) ?? '') : '';
-  },
-  { immediate: true },
-);
+// ---- who a person is ----
 
-/** A year is four digits, or nothing. */
-const yearValid = computed(
-  () => editBirthYear.value.trim() === ''
-    || String(birthYearOf(editBirthYear.value)) === editBirthYear.value.trim(),
-);
-
-const detailsDirty = computed(() => {
-  const node = selectedNode.value;
-  if (!node) return false;
-  const year = editBirthYear.value.trim();
-  return editGender.value !== (node.gender || 'unknown')
-    || year !== String(birthYearOf(node.birthDate) ?? '');
-});
-
-async function saveDetails() {
-  const node = selectedNode.value;
-  if (!node || !detailsDirty.value || !yearValid.value) return;
-  const written = await upsertHouseholdNode(
-    nodeWithDetails(node, {
-      gender: editGender.value,
-      birthYear: editBirthYear.value.trim() === '' ? null : birthYearOf(editBirthYear.value),
-    }),
-  );
-  if (written === null) return;
-  await reload();
+async function save(details: Record<string, unknown>) {
+  const id = selectedNode.value?.id;
+  if (id == null) return;
+  saveState.value = 'saving';
+  await queued(async () => {
+    // Who they are as the library holds them now. A change written just before
+    // this one is in there, and must not be written over with what there was before it.
+    const node = allNodes.value.find((entry: GraphObject) => entry.id === id) ?? null;
+    if (!node) {
+      saveState.value = 'error';
+      return;
+    }
+    const written = await upsertHouseholdNode(nodeWithDetails(node, details));
+    if (written === null) {
+      saveState.value = 'error';
+      toast.error(t('household.save_failed'));
+      return;
+    }
+    await reload();
+    saveState.value = 'saved';
+  });
 }
 
 async function makeRoot() {
   const household = current.value;
-  if (!household || !selectedNode.value) return;
-  const written = await updateHousehold(household.id, { rootNodeId: selectedNode.value.id });
-  if (written !== true) return;
-  await reload();
+  const node = selectedNode.value;
+  if (!household || !node) return;
+  await queued(async () => {
+    const written = await updateHousehold(household.id, { rootNodeId: node.id });
+    if (written !== true) {
+      toast.error(t('household.save_failed'));
+      return;
+    }
+    await reload();
+  });
+}
+
+/** Whether the person selected is in another graph as well. */
+const elsewhereSelected = computed(() => {
+  const node = selectedNode.value;
+  const household = current.value;
+  return Boolean(node && household
+    && households.value.some((entry: GraphObject) => entry.id !== household.id && entry.memberIds.includes(node.id)));
+});
+
+/**
+ * Take the person out of this graph. A link belongs to two people, not to a
+ * graph: the links between them and the people of this graph go with them
+ * when this is their only graph; in another graph they stay, where they are
+ * still wanted.
+ */
+async function removePerson() {
+  const node = selectedNode.value;
+  const household = current.value;
+  if (!node || !household) return;
+  const done = await queued(async () => {
+    const now = householdNow(household.id);
+    if (!now) return false;
+    const members = new Set<number>(now.memberIds ?? []);
+    if (!elsewhereSelected.value) {
+      // The links go first, while the person still counts as a member: the
+      // library replaces the links of the members, and only those.
+      const gone = (edge: GraphEdge) => edge.fromNode === node.id || edge.toNode === node.id;
+      const keeps = graphEdges.value.filter((edge: GraphEdge) => {
+        if (!gone(edge)) return true;
+        // A link out of the graph is the business of the graph it leads to.
+        return !members.has(edge.fromNode === node.id ? edge.toNode : edge.fromNode);
+      }).map(edgePayload);
+      const written = await setHouseholdEdges(household.id, keeps);
+      if (written !== true) {
+        toast.error(t('household.link_refused'));
+        return false;
+      }
+    }
+    const left = await setHouseholdMembers(household.id, [...members].filter((id: number) => id !== node.id));
+    if (left !== true) {
+      toast.error(t('household.save_failed'));
+      return false;
+    }
+    await reload();
+    return true;
+  });
+  // The root is what is left to look at.
+  if (done) selectedNodeId.value = current.value?.rootNodeId ?? null;
+}
+
+// ---- the people of the graph ----
+
+/** Bring a name in as a person, and into a graph. */
+async function bringIn(name: string, householdId?: number) {
+  const household = households.value.find((entry) => entry.id === (householdId ?? current.value?.id)) ?? null;
+  if (!household) return;
+  const joined = await queued(async () => {
+    const ids = await importHouseholdNodes([name]);
+    if (!Array.isArray(ids) || !ids.length) return false;
+    const now = householdNow(household.id);
+    if (!now) return false;
+    const written = await setHouseholdMembers(household.id, [...new Set([...(now.memberIds ?? []), ...ids.map(Number)])]);
+    if (written !== true) return false;
+    await reload();
+    return true;
+  });
+  if (!joined) {
+    toast.error(t('household.save_failed'));
+    return;
+  }
+  showAdd.value = false;
+  const node = nodeForName(allNodes.value, name);
+  switchTo(households.value.findIndex((entry) => entry.id === household.id), node?.id ?? null);
 }
 
 // ---- the graph itself ----
 
-function switchGraph(index: string) {
-  currentIndex.value = Number(index);
-  selectedNodeId.value = null;
-}
-
 async function toggleEnabled(enabled: boolean) {
   const household = current.value;
   if (!household) return;
-  const written = await updateHousehold(household.id, { enabled });
-  if (written !== true) return;
-  await reload();
+  await queued(async () => {
+    const written = await updateHousehold(household.id, { enabled });
+    if (written !== true) {
+      toast.error(t('household.save_failed'));
+      return;
+    }
+    await reload();
+  });
 }
 
-/** Bring a name in as a person, and into this graph. */
-async function join(name: string) {
+function switchGraph(index: number) {
+  switchTo(index, households.value[index]?.rootNodeId ?? null);
+}
+
+function switchTo(index: number, nodeId: number | null) {
+  currentIndex.value = Math.max(0, index);
+  selectedNodeId.value = nodeId;
+  pickerGroup.value = null;
+}
+
+/** The graph a person is in, if any. */
+function graphOf(name: string): { index: number; nodeId: number } | null {
+  const node = nodeForName(allNodes.value, name);
+  if (!node) return null;
+  const index = households.value.findIndex((entry) => entry.memberIds.includes(node.id));
+  return index >= 0 ? { index, nodeId: node.id } : null;
+}
+
+/** A graph starts from a person: they are its root, and nobody else is in it yet. */
+async function startGraph(name: string, { announce = false } = {}) {
+  const choices = await ensureAlbums();
+  const title = `${name}${t('household.name_suffix')}`;
+  const created = await queued(() => createHousehold(title, choices.map((album) => album.id), name, [name]));
+  if (created === null) {
+    toast.error(t('household.save_failed'));
+    return;
+  }
+  if (announce) toast.info(t('household.graph_created', { name: title }));
+  showNew.value = false;
+  await reload();
+  switchTo(households.value.findIndex((entry) => entry.id === created), nodeForName(allNodes.value, name)?.id ?? null);
+}
+
+/** Pick a person and end up in their graph: the one there is, or a new one with them as the root. */
+async function openGraphOf(row: { name: string }) {
+  const { name } = row;
+  const there = graphOf(name);
+  if (there) {
+    showNew.value = false;
+    switchTo(there.index, there.nodeId);
+    return;
+  }
+  await startGraph(name);
+}
+
+// ---- settings ----
+
+const showSettings = ref(false);
+const showNew = ref(false);
+const showAdd = ref(false);
+const draftName = ref('');
+const draftAlbums = ref<number[]>([]);
+const albums = ref<Array<{ id: number; name: string }>>([]);
+const deleting = ref(false);
+let forgetDelete: ReturnType<typeof setTimeout> | null = null;
+
+async function ensureAlbums() {
+  if (!albums.value.length) albums.value = await listAlbumChoices();
+  return albums.value;
+}
+
+async function openSettings() {
   const household = current.value;
   if (!household) return;
-  const ids = await importHouseholdNodes([name]);
-  if (!Array.isArray(ids) || !ids.length) return;
-  const members = new Set<number>(household.memberIds ?? []);
-  for (const id of ids) members.add(Number(id));
-  const written = await setHouseholdMembers(household.id, [...members]);
-  if (written !== true) return;
-  await reload();
+  draftName.value = household.name;
+  await ensureAlbums();
+  draftAlbums.value = [...household.albumIds];
+  deleting.value = false;
+  showSettings.value = true;
 }
 
-// ---- creating a graph ----
-
-const showCreate = ref(false);
-const draftName = ref('');
-const draftRoot = ref('');
-const draftMembers = ref<string[]>([]);
-const draftAlbums = ref<number[]>([]);
-const albumChoices = ref<Array<{ id: number; name: string }>>([]);
-
-const canCreate = computed(() => Boolean(draftRoot.value) && draftName.value.trim().length > 0);
-
-function toggleDraftMember(name: string, checked: boolean) {
-  draftMembers.value = checked
-    ? [...new Set([...draftMembers.value, name])]
-    : draftMembers.value.filter((entry) => entry !== name);
+function toggleAlbum(id: number, on: boolean) {
+  draftAlbums.value = on ? [...new Set([...draftAlbums.value, id])] : draftAlbums.value.filter((entry) => entry !== id);
 }
 
-function toggleDraftAlbum(id: number, checked: boolean) {
-  draftAlbums.value = checked
-    ? [...new Set([...draftAlbums.value, id])]
-    : draftAlbums.value.filter((entry) => entry !== id);
+async function saveSettings() {
+  const household = current.value;
+  const name = draftName.value.trim();
+  if (!household || !name) return;
+  await queued(async () => {
+    const written = await updateHousehold(household.id, { name, albumIds: draftAlbums.value });
+    if (written !== true) {
+      toast.error(t('household.save_failed'));
+      return;
+    }
+    await reload();
+    showSettings.value = false;
+  });
 }
 
-async function openCreate() {
-  draftRoot.value = '';
-  draftName.value = '';
-  draftMembers.value = namedFaces.value.map((entry: any) => entry.name);
-  showCreate.value = true;
-  if (!albumChoices.value.length) {
-    albumChoices.value = await listAlbumChoices();
+function askDelete() {
+  const household = current.value;
+  if (!household) return;
+  // One click asks; the next one, within a few seconds, does it.
+  if (deleting.value) {
+    deleting.value = false;
+    void queued(async () => {
+      const gone = await deleteHousehold(household.id);
+      if (gone === null) {
+        toast.error(t('household.save_failed'));
+        return;
+      }
+      await reload();
+      showSettings.value = false;
+      switchTo(0, null);
+    });
+    return;
   }
-  draftAlbums.value = albumChoices.value.map((album) => album.id);
+  deleting.value = true;
+  forgetDelete = setTimeout(() => {
+    deleting.value = false;
+  }, 5000);
 }
 
-// The name follows the root, until the user types one of their own.
-watch(draftRoot, (root) => {
-  const typed = draftName.value;
-  if (root && (typed === '' || /^[^\s家]+家$/.test(typed))) {
-    draftName.value = `${root}${t('household.name_suffix')}`;
+// ---- what to offer ----
+
+const rootChoices = computed(() =>
+  persons.value
+    // A graph is built from names the user gave; a made-up one is not a choice.
+    .filter((person) => !isAutoPersonName(person.name))
+    .map((person) => {
+      // Picking somebody who has a graph opens it: the card says which.
+      const there = graphOf(person.name);
+      return {
+        key: `person-${person.id}`,
+        name: person.name,
+        nodeId: nodeForName(allNodes.value, person.name)?.id ?? null,
+        thumbnail: person.thumbnail ?? null,
+        count: there ? null : person.count ?? null,
+        hint: there ? households.value[there.index].name : '',
+      };
+    }),
+);
+const addChoices = computed(() =>
+  unjoined.value.map((entry) => ({
+    key: `name-${entry.name}`,
+    name: entry.name,
+    nodeId: null,
+    thumbnail: entry.thumbnail,
+    count: entry.count ?? null,
+  })),
+);
+
+// ---- selection ----
+
+function selectNode(id: number) {
+  if (selectedNodeId.value === id) return;
+  selectedNodeId.value = id;
+  pickerGroup.value = null;
+}
+
+function clearSelection() {
+  selectedNodeId.value = null;
+  pickerGroup.value = null;
+}
+
+// Whoever was selected and leaves the graph takes the selection with them:
+// the root is what there is to look at then.
+watch([memberNodes, currentIndex], () => {
+  if (selectedNodeId.value != null && !memberNodes.value.some((node: GraphObject) => node.id === selectedNodeId.value)) {
+    selectedNodeId.value = current.value?.rootNodeId ?? null;
+    pickerGroup.value = null;
   }
 });
-
-async function submitCreate() {
-  if (!canCreate.value) return;
-  // The root belongs to the graph whether or not it was ticked.
-  const members = [...new Set([...draftMembers.value, draftRoot.value])];
-  const created = await createHousehold(
-    draftName.value.trim(),
-    draftAlbums.value,
-    draftRoot.value,
-    members,
-  );
-  if (created === null) return;
-  showCreate.value = false;
-  await reload();
-  const index = households.value.findIndex((household: any) => household.id === created);
-  currentIndex.value = index >= 0 ? index : 0;
-  selectedNodeId.value = null;
-}
-
 watch(households, () => {
   if (currentIndex.value >= households.value.length) currentIndex.value = 0;
 });
 
-onMounted(reload);
+// ---- opening the page ----
+
+/**
+ * Bring a person into view: the graph that has them opens on them, and when
+ * nobody has them yet they join — or, with no graph at all, start one.
+ */
+async function focusPerson(personId: number) {
+  const person = persons.value.find((entry) => entry.id === personId);
+  if (!person) return;
+  // A graph is built from names: somebody without one cannot be in it.
+  if (isAutoPersonName(person.name)) {
+    toast.warning(t('household.name_first'));
+    return;
+  }
+  const node = nodeForName(allNodes.value, person.name);
+  if (node) {
+    const index = households.value.findIndex((household) => household.memberIds.includes(node.id));
+    if (index >= 0) {
+      switchTo(index, node.id);
+      return;
+    }
+  }
+  if (!households.value.length) {
+    await startGraph(person.name, { announce: true });
+    return;
+  }
+  // One graph: that is where somebody new belongs. Which of several is not
+  // for the page to guess: they wait under the list, one click away.
+  if (households.value.length === 1) {
+    await bringIn(person.name, households.value[0].id);
+    return;
+  }
+  selectedNodeId.value = null;
+  pickerGroup.value = null;
+}
+
+/** Somebody picked from the list of those not in the graph. */
+function pickToJoin(row: { name: string }) {
+  return bringIn(row.name);
+}
+
+async function loadPersons() {
+  persons.value = await listPersons();
+}
+
+async function bootstrap() {
+  await Promise.all([reload(), loadPersons()]);
+  const wanted = personIdIn(window.location?.search);
+  if (wanted != null) {
+    await focusPerson(wanted);
+    return;
+  }
+  // A graph opens on its root: the root is where the links start.
+  selectedNodeId.value = current.value?.rootNodeId ?? null;
+}
+
+let unlisten: (() => void) | null = null;
+
+onMounted(async () => {
+  // Picking "open the graph" on another person in the main window moves this page too.
+  try {
+    unlisten = await listen('household-select', (event: { payload?: { personId?: number } }) => {
+      if (event.payload?.personId != null) void focusPerson(event.payload.personId);
+    });
+  } catch (error) {
+    console.error('Failed to listen for the person to show:', error);
+  }
+  await bootstrap();
+});
+
+onBeforeUnmount(() => {
+  unlisten?.();
+  unlisten = null;
+  if (forgetDelete) clearTimeout(forgetDelete);
+});
 </script>

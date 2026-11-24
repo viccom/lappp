@@ -38,6 +38,57 @@ export async function listFaceNamesForHousehold() {
   }
 }
 
+/** How many people a page of the people list carries; the library allows no more. */
+const PERSON_PAGE = 100;
+
+/**
+ * A face the library keeps, as the address of a picture.
+ *
+ * The library keeps a face as the JPEG itself and hands it over as bare
+ * base64 (`Person::get_page`); a page can only show it with the whole data
+ * address in front, the way the people panel puts it. Something that is an
+ * address already is left alone.
+ *
+ * @param {string | null | undefined} thumbnail
+ * @returns {string | null}
+ */
+export function faceSource(thumbnail) {
+  const value = typeof thumbnail === 'string' ? thumbnail.trim() : '';
+  if (!value) return null;
+  return /^data:/.test(value) ? value : `data:image/jpeg;base64,${value}`;
+}
+
+/**
+ * Everybody in the people panel, with the face the library keeps for them.
+ *
+ * A graph knows its people by name, and a face belongs to a person by id: this
+ * is the table that joins the two, and brings the face along for the canvas.
+ * The names the clustering made up are in it too: a page opened on one of
+ * those people has to be able to tell the user why nothing can start from it.
+ */
+export async function listPersons() {
+  const persons = [];
+  try {
+    for (let page = 0; page < 100; page += 1) {
+      const chunk = await invoke('get_persons_page', {
+        request: { sort: 0, offset: page * PERSON_PAGE, limit: PERSON_PAGE, search: '', refreshSummary: null },
+      });
+      for (const person of chunk?.persons ?? []) {
+        persons.push({
+          id: person.id,
+          name: person.name,
+          count: person.count ?? null,
+          thumbnail: faceSource(person.thumbnail),
+        });
+      }
+      if (!chunk?.has_more) break;
+    }
+  } catch (error) {
+    console.error('Failed to list the people:', error);
+  }
+  return persons.filter((person) => person?.name);
+}
+
 export async function previewHouseholdCard(fileId) {
   try {
     return (await invoke('preview_household_card', { fileId })) ?? null;
@@ -73,6 +124,10 @@ export async function updateHousehold(householdId, changes) {
   }
 }
 
+/**
+ * Delete a graph. The library answers whether there was one to delete; null
+ * when the call failed.
+ */
 export async function deleteHousehold(householdId) {
   try {
     return await invoke('delete_household', { householdId });
@@ -100,11 +155,16 @@ export async function upsertHouseholdNode(node) {
   }
 }
 
+/**
+ * Take a person out of every graph, with their links. The library answers
+ * whether there was somebody to take out; null when it refused or the call
+ * failed (the root of a graph cannot be taken out).
+ */
 export async function deleteHouseholdNode(nodeId) {
   try {
     return await invoke('delete_household_node', { nodeId });
   } catch (error) {
-    console.error('Failed to delete the object:', error);
+    console.error('Failed to take the person out:', error);
     return null;
   }
 }

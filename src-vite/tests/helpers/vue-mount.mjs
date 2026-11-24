@@ -266,9 +266,12 @@ export const IconPerson = vue.defineComponent({
  * @param {string} file the component to mount
  * @param {Record<string, unknown>} mocks what stands in for the modules the page imports
  * @param {string} locale
+ * @param {{ search?: string }} [options] the query of the address the page was opened at
  */
-export async function mountPage(srcDir, file, mocks, locale = 'zh-CN') {
-  globalThis.window = { addEventListener() {}, removeEventListener() {}, innerWidth: 1200, innerHeight: 800 };
+export async function mountPage(srcDir, file, mocks, locale = 'zh-CN', { search = '' } = {}) {
+  globalThis.window = {
+    addEventListener() {}, removeEventListener() {}, innerWidth: 1200, innerHeight: 800, location: { search },
+  };
   const t = translator(srcDir, locale);
   const loader = createLoader(srcDir, { 'vue-i18n': { useI18n: () => ({ t }) }, ...mocks });
   const component = (await loader.loadFile(file)).default;

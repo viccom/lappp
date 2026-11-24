@@ -1,0 +1,626 @@
+/* The family graph page. The names are prefixed `hh-` because the file is
+   not scoped: the parts of the page share it. */
+
+.hh-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 44px;
+  padding: 0 12px;
+  border-bottom: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  flex: none;
+}
+.hh-bar-title {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.hh-graph-name {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: color-mix(in oklab, var(--color-base-content) 70%, transparent);
+}
+.hh-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.hh-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 9px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: color-mix(in oklab, var(--color-base-content) 72%, transparent);
+  cursor: pointer;
+}
+.hh-bar-btn:hover {
+  color: var(--color-base-content);
+  background: color-mix(in oklab, var(--color-base-content) 8%, transparent);
+}
+.hh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 14%, transparent);
+  font-size: 13px;
+  white-space: nowrap;
+  color: color-mix(in oklab, var(--color-base-content) 80%, transparent);
+  cursor: pointer;
+}
+.hh-btn:hover {
+  color: var(--color-base-content);
+  background: color-mix(in oklab, var(--color-base-content) 7%, transparent);
+}
+.hh-btn-primary {
+  border-color: transparent;
+  color: var(--color-primary-content);
+  background: var(--color-primary);
+}
+.hh-btn-primary:hover {
+  color: var(--color-primary-content);
+  background: color-mix(in oklab, var(--color-primary) 86%, black);
+}
+.hh-btn-danger {
+  color: var(--color-error);
+  border-color: color-mix(in oklab, var(--color-error) 40%, transparent);
+}
+.hh-btn-danger:hover {
+  color: var(--color-error);
+  background: color-mix(in oklab, var(--color-error) 10%, transparent);
+}
+
+.hh-start {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.hh-start-inner {
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.hh-start-title {
+  margin: 0;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.hh-start-hint {
+  margin: -6px 0 0;
+  text-align: center;
+  font-size: 13px;
+  line-height: 22px;
+  color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+}
+.hh-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+.hh-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 8px 12px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  background: color-mix(in oklab, var(--color-base-content) 3%, transparent);
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, transform 0.15s;
+}
+.hh-choice:hover {
+  border-color: color-mix(in oklab, var(--color-primary) 55%, transparent);
+  background: color-mix(in oklab, var(--color-primary) 7%, transparent);
+  transform: translateY(-1px);
+}
+.hh-choice:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.hh-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.hh-side {
+  flex: none;
+  width: 304px;
+  border-left: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.hh-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.hh-row:hover {
+  background: color-mix(in oklab, var(--color-base-content) 7%, transparent);
+}
+.hh-row:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.hh-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+}
+.hh-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 10px;
+  letter-spacing: 0;
+  background: color-mix(in oklab, var(--color-base-content) 10%, transparent);
+}
+.hh-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--color-primary);
+  background: color-mix(in oklab, var(--color-primary) 14%, transparent);
+}
+.hh-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  height: 22px;
+  padding: 0 8px 0 5px;
+  border-radius: 8px;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--color-primary);
+  cursor: pointer;
+}
+.hh-add:hover,
+.hh-add[aria-expanded='true'] {
+  background: color-mix(in oklab, var(--color-primary) 12%, transparent);
+}
+
+.hh-field {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  font-size: 13px;
+}
+.hh-field-stack {
+  align-items: start;
+}
+.hh-field-stack .hh-label {
+  padding-top: 8px;
+}
+.hh-label {
+  font-size: 12px;
+  color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+}
+.hh-input {
+  width: 100%;
+  height: 28px;
+  font-size: 13px;
+}
+textarea.hh-input {
+  height: auto;
+  min-height: 46px;
+  resize: vertical;
+  line-height: 18px;
+}
+.hh-input[data-invalid='true'] {
+  border-color: var(--color-error);
+}
+.hh-field-note {
+  grid-column: 2;
+  margin-top: -4px;
+  font-size: 11px;
+  color: var(--color-error);
+}
+.hh-seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 9px;
+  background: color-mix(in oklab, var(--color-base-content) 8%, transparent);
+}
+.hh-seg button {
+  height: 24px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+  cursor: pointer;
+}
+.hh-seg button:hover {
+  color: var(--color-base-content);
+}
+.hh-seg button[aria-pressed='true'] {
+  background: var(--color-base-100);
+  color: var(--color-base-content);
+  box-shadow: 0 1px 2px color-mix(in oklab, var(--color-base-content) 15%, transparent);
+}
+.hh-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  font-size: 12px;
+  color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+  cursor: pointer;
+}
+.hh-save {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
+}
+.hh-save[data-state='saved'] {
+  color: var(--color-success);
+}
+.hh-save[data-state='error'] {
+  color: var(--color-error);
+}
+
+.hh-group {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+}
+.hh-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 3px 8px;
+  border-radius: 10px;
+}
+.hh-link:hover {
+  background: color-mix(in oklab, var(--color-base-content) 5%, transparent);
+}
+.hh-link-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.hh-link-name:hover {
+  color: var(--color-primary);
+}
+.hh-word {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+}
+.hh-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-size: 15px;
+  line-height: 1;
+  color: color-mix(in oklab, var(--color-base-content) 35%, transparent);
+  cursor: pointer;
+}
+.hh-x:hover {
+  color: var(--color-error);
+  background: color-mix(in oklab, var(--color-error) 12%, transparent);
+}
+.hh-picker {
+  margin: 2px 0 6px;
+  padding: 8px;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--color-base-content) 4%, transparent);
+}
+.hh-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.hh-chips .hh-label {
+  margin-right: 2px;
+}
+.hh-chips button {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+  background: color-mix(in oklab, var(--color-base-content) 8%, transparent);
+  cursor: pointer;
+}
+.hh-chips button:hover {
+  color: var(--color-base-content);
+}
+.hh-chips button[aria-pressed='true'] {
+  color: var(--color-primary-content);
+  background: var(--color-primary);
+}
+.hh-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+}
+
+/* ---- the canvas ---- */
+.hh-person {
+  cursor: pointer;
+  outline: none;
+}
+.hh-halo {
+  fill: transparent;
+  transition: fill 0.15s;
+}
+.hh-person:hover .hh-halo {
+  fill: color-mix(in oklab, var(--color-base-content) 7%, transparent);
+}
+.hh-person.is-selected .hh-halo,
+.hh-person:focus-visible .hh-halo {
+  fill: color-mix(in oklab, var(--color-primary) 14%, transparent);
+}
+.hh-ring {
+  fill: color-mix(in oklab, var(--color-base-content) 6%, transparent);
+  stroke: color-mix(in oklab, var(--color-base-content) 28%, transparent);
+  stroke-width: 2;
+  transition: stroke 0.15s;
+}
+.hh-ring-male {
+  stroke: color-mix(in oklab, #60a5fa 85%, transparent);
+}
+.hh-ring-female {
+  stroke: color-mix(in oklab, #f472b6 85%, transparent);
+}
+.hh-person.is-selected .hh-ring {
+  stroke: var(--color-primary);
+  stroke-width: 3;
+}
+.hh-silhouette {
+  fill: color-mix(in oklab, var(--color-base-content) 30%, transparent);
+}
+.hh-name {
+  font-size: 13px;
+  font-weight: 500;
+  text-anchor: middle;
+  fill: var(--color-base-content);
+  paint-order: stroke;
+  stroke: var(--color-base-100);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.hh-term {
+  font-size: 11px;
+  text-anchor: middle;
+  fill: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+  paint-order: stroke;
+  stroke: var(--color-base-100);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.hh-root rect {
+  fill: var(--color-primary);
+}
+.hh-root text {
+  font-size: 10px;
+  font-weight: 600;
+  text-anchor: middle;
+  fill: var(--color-primary-content);
+}
+.hh-line {
+  fill: none;
+  stroke: color-mix(in oklab, var(--color-base-content) 26%, transparent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  transition: stroke 0.15s;
+}
+.hh-line-couple {
+  stroke: color-mix(in oklab, var(--color-base-content) 40%, transparent);
+  stroke-width: 2;
+}
+.hh-line-other {
+  stroke-dasharray: 4 4;
+}
+.hh-line-social {
+  stroke: color-mix(in oklab, #14b8a6 80%, transparent);
+  stroke-dasharray: 5 4;
+}
+.hh-social .hh-word-bg {
+  fill: var(--color-base-100);
+}
+.hh-social .hh-word {
+  font-size: 10px;
+  text-anchor: middle;
+  fill: #0f766e;
+}
+.hh-arrow {
+  fill: #0f766e;
+}
+.hh-line-on,
+.hh-social.hh-line-on .hh-line-social {
+  stroke: var(--color-primary);
+}
+.hh-social.hh-line-on .hh-word {
+  fill: var(--color-primary);
+}
+.hh-hint {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 420px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+  color: color-mix(in oklab, var(--color-base-content) 70%, transparent);
+  background: color-mix(in oklab, var(--color-base-100) 88%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  box-shadow: 0 4px 16px color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  pointer-events: none;
+}
+.hh-zoom {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
+  background: color-mix(in oklab, var(--color-base-100) 92%, transparent);
+  box-shadow: 0 2px 10px color-mix(in oklab, var(--color-base-content) 8%, transparent);
+}
+.hh-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  color: color-mix(in oklab, var(--color-base-content) 65%, transparent);
+  cursor: pointer;
+}
+.hh-tool:hover {
+  color: var(--color-base-content);
+  background: color-mix(in oklab, var(--color-base-content) 7%, transparent);
+}
+.hh-tool-wide {
+  width: 52px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  border-left: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+  border-right: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+}
+.hh-canvas-note {
+  position: absolute;
+  right: 12px;
+  bottom: 16px;
+  font-size: 11px;
+  color: color-mix(in oklab, var(--color-base-content) 28%, transparent);
+}
+.hh-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px;
+}
+.hh-panel header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.hh-panel-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 22px;
+}
+.hh-panel-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+}
+.hh-term {
+  color: var(--color-primary);
+}
+.hh-section {
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+}
+.hh-empty {
+  margin: 0;
+  padding: 2px 0 2px 8px;
+  font-size: 12px;
+  line-height: 18px;
+  color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
+}
+.hh-spacer {
+  flex: 1;
+}
+.hh-danger {
+  color: var(--color-error);
+}
+
+@media (max-width: 960px) {
+  .hh-side {
+    width: 272px;
+  }
+}
+
+@media (max-width: 720px) {
+  .hh-body {
+    flex-direction: column-reverse;
+  }
+  .hh-side {
+    width: auto;
+    max-height: 46%;
+    border-left: 0;
+    border-top: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  }
+}
