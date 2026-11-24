@@ -429,3 +429,260 @@ mod tests {
         assert_eq!(people(&conn), vec![(Some("Ann".to_string()), 0), (None, 1)]);
     }
 }
+
+/// Verification against a copy of a real library.
+///
+/// The copy is made by the test, the library it came from is never touched.
+/// Point LAP_FACE_OWNERSHIP_DB at a snapshot of a library to run this.
+#[cfg(test)]
+mod real_library_tests {
+    use super::*;
+    use crate::t_sqlite::{TEST_DB_PATH, open_conn};
+    use std::path::PathBuf;
+
+    struct TempLibrary(PathBuf);
+    impl Drop for TempLibrary {
+        fn drop(&mut self) {
+            TEST_DB_PATH.with(|path| path.replace(None));
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The people of the library: name and face count, by name.
+    fn people_by_name(conn: &Connection) -> Vec<(Option<String>, i64)> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT p.name, COUNT(f.id) FROM persons p
+                 LEFT JOIN faces f ON f.person_id = p.id
+                 GROUP BY p.id ORDER BY p.id",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?))
+            })
+            .unwrap();
+        rows.collect::<Result<Vec<_>, _>>().unwrap()
+    }
+
+    /// How many people carry a name the user gave.
+    fn user_named(conn: &Connection) -> usize {
+        let mut stmt = conn
+            .prepare(
+                "SELECT COUNT(*) FROM persons
+                 WHERE name IS NOT NULL AND TRIM(name) <> ''
+                   AND LOWER(TRIM(name)) NOT LIKE 'person %'",
+            )
+            .unwrap();
+        stmt.query_row([], |row| row.get::<_, usize>(0)).unwrap()
+    }
+
+    fn counts(conn: &Connection) -> (usize, usize) {
+        let persons: usize = conn
+            .query_row("SELECT COUNT(*) FROM persons", [], |row| row.get(0))
+            .unwrap();
+        let faces: usize = conn
+            .query_row(
+                "SELECT COUNT(*) FROM faces WHERE person_id IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        (persons, faces)
+    }
+
+    #[test]
+    #[ignore = "needs a library snapshot: set LAP_FACE_OWNERSHIP_DB"]
+    fn a_link_survives_a_re_index_and_a_cancelled_one_changes_nothing() {
+        let _serial = crate::t_storage::db_migration_test_lock();
+        let source = std::env::var("LAP_FACE_OWNERSHIP_DB").expect("LAP_FACE_OWNERSHIP_DB");
+        let root = TempLibrary(
+            std::env::temp_dir().join(format!("lap-ownership-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir(&root.0).unwrap();
+        let copy = root.0.join("catalog.db");
+        std::fs::copy(&source, &copy).unwrap();
+        TEST_DB_PATH.with(|path| {
+            path.replace(Some(copy.to_str().unwrap().to_string()));
+        });
+
+        // What the library looks like to start with.
+        let (persons_before, faces_before) = {
+            let conn = open_conn().unwrap();
+            let counts = counts(&conn);
+            eprintln!(
+                "start: {} people ({} named by the user), {} faces",
+                counts.0,
+                user_named(&conn),
+                counts.1
+            );
+            assert!(counts.1 > 0, "the snapshot has no faces");
+            counts
+        };
+
+        // A re-index must not lose a name.
+        crate::t_cluster::cluster_faces(0.55, |_| {}, || false).unwrap();
+        {
+            let conn = open_conn().unwrap();
+            let (persons, faces) = counts(&conn);
+            let named = user_named(&conn);
+            eprintln!(
+                "after re-index: {} people ({} named by the user), {} faces",
+                persons, named, faces
+            );
+            assert_eq!(faces, faces_before, "a re-index lost faces");
+            assert!(named > 0, "a re-index lost every name");
+        }
+
+        // A cancelled re-index must change nothing.
+        {
+            let conn = open_conn().unwrap();
+            let before = people_by_name(&conn);
+            drop(conn);
+            crate::t_cluster::cluster_faces(0.55, |_| {}, || true).unwrap();
+            let conn = open_conn().unwrap();
+            assert_eq!(
+                people_by_name(&conn),
+                before,
+                "a cancelled re-index changed the people"
+            );
+        }
+
+        // Link the biggest unnamed cluster to the biggest named person.
+        let (target_id, target_name, target_faces, source_id, source_faces) = {
+            let conn = open_conn().unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT p.id, p.name, COUNT(f.id) AS count FROM persons p
+                     JOIN faces f ON f.person_id = p.id
+                     WHERE p.name IS NOT NULL AND TRIM(p.name) <> ''
+                       AND LOWER(TRIM(p.name)) NOT LIKE 'person %'
+                     GROUP BY p.id ORDER BY count DESC LIMIT 1",
+                )
+                .unwrap();
+            let (target_id, target_name, target_faces): (i64, String, i64) = stmt
+                .query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT p.id, COUNT(f.id) AS count FROM persons p
+                     JOIN faces f ON f.person_id = p.id
+                     WHERE p.name IS NULL OR TRIM(p.name) = ''
+                        OR LOWER(TRIM(p.name)) LIKE 'person %'
+                     GROUP BY p.id ORDER BY count DESC LIMIT 1",
+                )
+                .unwrap();
+            let (source_id, source_faces): (i64, i64) = stmt
+                .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap();
+            eprintln!(
+                "linking the unnamed cluster with {} faces to the person with {} faces",
+                source_faces, target_faces
+            );
+            (
+                target_id,
+                target_name,
+                target_faces,
+                source_id,
+                source_faces,
+            )
+        };
+
+        {
+            let mut conn = open_conn().unwrap();
+            let result =
+                merge_persons_with_conn(&mut conn, &[source_id], target_id, false).unwrap();
+            assert_eq!(result.moved_face_ids.len() as i64, source_faces);
+            assert_eq!(result.merged_person_ids, vec![source_id]);
+        }
+        {
+            let conn = open_conn().unwrap();
+            let row: (i64, Option<String>) = conn
+                .query_row(
+                    "SELECT COUNT(f.id), p.name FROM persons p
+                     JOIN faces f ON f.person_id = p.id WHERE p.id = ?1 GROUP BY p.id",
+                    params![target_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(row.0, target_faces + source_faces);
+            assert_eq!(row.1, Some(target_name.clone()));
+        }
+
+        // The link has to survive the next re-index.
+        crate::t_cluster::cluster_faces(0.55, |_| {}, || false).unwrap();
+        {
+            let conn = open_conn().unwrap();
+            let row: (i64, Option<String>) = conn
+                .query_row(
+                    "SELECT COUNT(f.id), p.name FROM persons p
+                     JOIN faces f ON f.person_id = p.id WHERE p.name = ?1 GROUP BY p.id",
+                    params![target_name],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            eprintln!("after the second re-index: {} faces under the name", row.0);
+            assert_eq!(
+                row.0,
+                target_faces + source_faces,
+                "the link did not survive"
+            );
+        }
+
+        // Undoing the link gives the faces a person of their own again. The
+        // person is found by name: a re-index gives the rows new ids.
+        {
+            let conn = open_conn().unwrap();
+            let face_ids: Vec<i64> = {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT f.id FROM faces f
+                         JOIN persons p ON p.id = f.person_id
+                         WHERE p.name = ?1",
+                    )
+                    .unwrap();
+                let rows = stmt
+                    .query_map(params![target_name], |row| row.get::<_, i64>(0))
+                    .unwrap();
+                let mut ids = Vec::new();
+                for row in rows {
+                    ids.push(row.unwrap());
+                }
+                ids
+            };
+            let moved = face_ids.len();
+            let mut conn = open_conn().unwrap();
+            let new_person = move_faces_to_new_person_with_conn(&mut conn, &face_ids).unwrap();
+            let name: Option<String> = conn
+                .query_row(
+                    "SELECT name FROM persons WHERE id = ?1",
+                    params![new_person],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(name.is_none(), "the new person got a name");
+            let still: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM faces WHERE person_id = ?1",
+                    params![new_person],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(still, moved as i64);
+            eprintln!(
+                "undo: {} faces moved back into a person without a name",
+                still
+            );
+        }
+
+        let (persons_after, faces_after) = {
+            let conn = open_conn().unwrap();
+            counts(&conn)
+        };
+        eprintln!(
+            "end: {} people (was {}), {} faces (was {})",
+            persons_after, persons_before, faces_after, faces_before
+        );
+        assert_eq!(faces_after, faces_before, "faces went missing");
+    }
+}
