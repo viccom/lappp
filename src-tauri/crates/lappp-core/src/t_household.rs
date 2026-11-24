@@ -2155,6 +2155,293 @@ pub fn set_edges_with_conn(
     Ok(())
 }
 
+/// Verification against a copy of a real library.
+///
+/// The copy is made by the test, the library it came from is never touched.
+/// Point LAP_HOUSEHOLD_DB at a snapshot of a library to run this.
+#[cfg(test)]
+mod real_library_tests {
+    use super::*;
+    use crate::t_sqlite::{TEST_DB_PATH, open_conn};
+    use std::path::PathBuf;
+
+    struct TempLibrary(PathBuf);
+    impl Drop for TempLibrary {
+        fn drop(&mut self) {
+            TEST_DB_PATH.with(|path| path.replace(None));
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The names the library carries, as the module sees them.
+    fn names_of(conn: &Connection) -> Vec<String> {
+        face_names_with_conn(conn)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect()
+    }
+
+    #[test]
+    #[ignore = "needs a library snapshot: set LAP_HOUSEHOLD_DB"]
+    fn a_graph_built_on_a_real_library_survives_a_re_index() {
+        let _serial = crate::t_storage::db_migration_test_lock();
+        let source = std::env::var("LAP_HOUSEHOLD_DB").expect("LAP_HOUSEHOLD_DB");
+        let root = TempLibrary(
+            std::env::temp_dir().join(format!("lap-household-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir(&root.0).unwrap();
+        let copy = root.0.join("catalog.db");
+        std::fs::copy(&source, &copy).unwrap();
+        TEST_DB_PATH.with(|path| {
+            path.replace(Some(copy.to_str().unwrap().to_string()));
+        });
+
+        // What the library offers to start with.
+        let names = {
+            let conn = open_conn().unwrap();
+            let names = names_of(&conn);
+            assert!(
+                names.len() >= 2,
+                "the snapshot has fewer than two named faces"
+            );
+            eprintln!("named faces in the library: {}", names.len());
+            names
+        };
+        let (first, second) = (names[0].clone(), names[1].clone());
+
+        // A graph: the first name is the root, the second joins it.
+        let (household, first_id, second_id, album_id) = {
+            let mut conn = open_conn().unwrap();
+            let album_id: Option<i64> = conn
+                .query_row("SELECT id FROM albums ORDER BY id LIMIT 1", [], |row| {
+                    row.get(0)
+                })
+                .optional()
+                .unwrap();
+            let album_id = album_id.expect("the snapshot has no album");
+            let household = create_household_with_conn(
+                &mut conn,
+                "测试图谱",
+                &[album_id],
+                &first,
+                &[first.clone(), second.clone()],
+            )
+            .unwrap();
+            let overview = overview_with_conn(&conn).unwrap().expect("no overview");
+            let first_id = overview
+                .nodes
+                .iter()
+                .find(|node| node.anchors.contains(&first))
+                .map(|node| node.id)
+                .expect("the root is missing");
+            let second_id = overview
+                .nodes
+                .iter()
+                .find(|node| node.anchors.contains(&second))
+                .map(|node| node.id)
+                .expect("the second person is missing");
+            eprintln!(
+                "graph {household}: root {first} ({first_id}), member {second} ({second_id})"
+            );
+            (household, first_id, second_id, album_id)
+        };
+
+        // One link: the second person is the child of the root.
+        {
+            let conn = open_conn().unwrap();
+            set_edges_with_conn(
+                &conn,
+                household,
+                &[HouseholdEdge {
+                    kind: "parent".to_string(),
+                    from_node: first_id,
+                    to_node: second_id,
+                    ..Default::default()
+                }],
+            )
+            .unwrap();
+        }
+
+        // The card of a photo that shows both of them, if the library has one.
+        let shared_file: Option<i64> = {
+            let conn = open_conn().unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT f1.file_id FROM faces f1
+                     JOIN persons p1 ON p1.id = f1.person_id
+                     JOIN faces f2 ON f2.file_id = f1.file_id
+                     JOIN persons p2 ON p2.id = f2.person_id
+                     WHERE p1.name = ?1 AND p2.name = ?2 LIMIT 1",
+                )
+                .unwrap();
+            stmt.query_row(params![first, second], |row| row.get::<_, i64>(0))
+                .optional()
+                .unwrap()
+        };
+        match shared_file {
+            Some(file_id) => {
+                let conn = open_conn().unwrap();
+                let card = card_for_file(&conn, file_id).unwrap();
+                let card = card.expect("a photo of two members has no card");
+                eprintln!("card of file {file_id}:\n{card}");
+                assert!(card.contains(&first), "the root is not in the card");
+                assert!(card.contains(&second), "the member is not in the card");
+            }
+            None => eprintln!("no photo shows both names; the card is checked by the unit tests"),
+        }
+
+        // The graph has to survive a full re-index of the faces.
+        crate::t_cluster::cluster_faces(0.55, |_| {}, || false).unwrap();
+        {
+            let conn = open_conn().unwrap();
+            let overview = overview_with_conn(&conn)
+                .unwrap()
+                .expect("the graph is gone");
+            assert_eq!(overview.households.len(), 1, "the graph did not survive");
+            assert_eq!(overview.nodes.len(), 2, "the objects did not survive");
+            assert_eq!(overview.edges.len(), 1, "the link did not survive");
+            let root: i64 = conn
+                .query_row(
+                    "SELECT root_node_id FROM households WHERE id = ?1",
+                    params![household],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(root, first_id, "the root changed");
+            eprintln!(
+                "after a re-index: {} objects, {} links",
+                overview.nodes.len(),
+                overview.edges.len()
+            );
+        }
+
+        // Deleting the graph keeps the objects and the links.
+        {
+            let mut conn = open_conn().unwrap();
+            assert!(delete_household_with_conn(&mut conn, household).unwrap());
+            let conn = open_conn().unwrap();
+            let overview = overview_with_conn(&conn)
+                .unwrap()
+                .expect("the tables are gone");
+            assert!(overview.households.is_empty(), "the graph is still there");
+            assert_eq!(overview.nodes.len(), 2, "the objects went with the graph");
+            assert_eq!(overview.edges.len(), 1, "the links went with the graph");
+            eprintln!(
+                "after deleting the graph: {} objects, {} links stay",
+                overview.nodes.len(),
+                overview.edges.len()
+            );
+        }
+        let _ = album_id;
+    }
+
+    #[test]
+    #[ignore = "needs a library snapshot: set LAP_HOUSEHOLD_DB"]
+    fn the_templates_of_an_older_library_read_the_same_after_the_migration() {
+        let _serial = crate::t_storage::db_migration_test_lock();
+        let source = std::env::var("LAP_HOUSEHOLD_DB").expect("LAP_HOUSEHOLD_DB");
+        let root = TempLibrary(
+            std::env::temp_dir().join(format!("lap-household-tpl-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir(&root.0).unwrap();
+        let copy = root.0.join("catalog.db");
+        std::fs::copy(&source, &copy).unwrap();
+        TEST_DB_PATH.with(|path| {
+            path.replace(Some(copy.to_str().unwrap().to_string()));
+        });
+
+        // The library before the migration: its own text of each template.
+        let before: Vec<(String, String)> = {
+            let conn = open_conn().unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT name, prompt_template FROM vl_templates
+                     WHERE is_builtin = 1 ORDER BY name, version",
+                )
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .unwrap();
+            rows.collect::<Result<Vec<_>, _>>().unwrap()
+        };
+        if before.is_empty() {
+            eprintln!("the snapshot has no templates; nothing to compare");
+            return;
+        }
+        let version_before: i64 = {
+            let conn = open_conn().unwrap();
+            conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+                .unwrap()
+        };
+
+        // Run the migration the way the app does at start-up.
+        {
+            let conn = open_conn().unwrap();
+            crate::t_migration::check_and_migrate(&conn).unwrap();
+        }
+        let after: Vec<(String, String)> = {
+            let conn = open_conn().unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT name, prompt_template FROM vl_templates
+                     WHERE is_builtin = 1 ORDER BY name, version",
+                )
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .unwrap();
+            rows.collect::<Result<Vec<_>, _>>().unwrap()
+        };
+        let version_after: i64 = {
+            let conn = open_conn().unwrap();
+            conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+                .unwrap()
+        };
+        eprintln!(
+            "templates {} -> {}, schema {version_before} -> {version_after}",
+            before.len(),
+            after.len()
+        );
+
+        // No row was changed: the old text is still there, unchanged.
+        for (name, prompt) in &before {
+            let kept = after
+                .iter()
+                .find(|(other, other_prompt)| other == name && other_prompt == prompt)
+                .is_some();
+            assert!(kept, "{name}: the text the annotations point at changed");
+        }
+        assert!(
+            after.len() >= before.len(),
+            "the migration removed a template"
+        );
+
+        // And a library without a graph renders both versions the same way.
+        let context = crate::t_vl::PromptContext::default();
+        let mut compared = 0;
+        for (name, prompt) in &before {
+            if !prompt.contains("{family}") {
+                // The old text has no card line at all.
+                compared += 1;
+                continue;
+            }
+            let without = prompt.replace("\n{family}", "");
+            assert_eq!(
+                crate::t_vl::render_prompt(prompt, &context),
+                crate::t_vl::render_prompt(&without, &context),
+                "{name}: the card line changed the prompt of a library without a graph"
+            );
+            compared += 1;
+        }
+        eprintln!("compared {compared} templates");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
