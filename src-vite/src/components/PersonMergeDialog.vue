@@ -51,13 +51,10 @@
       </div>
 
       <div class="flex justify-end gap-2 mt-1">
-        <TButton :text="t('msgbox.cancel')" @click="emit('cancel')" />
-        <TButton
-          :text="t('msgbox.merge_person.title')"
-          buttonClasses="btn-primary"
-          :disabled="!chosen"
-          @click="chosen && emit('confirm', chosen)"
-        />
+        <button type="button" class="t-button-default" @click="emit('cancel')">{{ t('msgbox.cancel') }}</button>
+        <button type="button" class="t-button-primary" :disabled="!chosen" @click="chosen && emit('confirm', chosen)">
+          {{ t('msgbox.merge_person.title') }}
+        </button>
       </div>
     </div>
   </ModalDialog>
@@ -68,7 +65,6 @@ import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { IconPerson, IconSearch, IconClose } from '@/common/icons';
 import ModalDialog from '@/components/ModalDialog.vue';
-import TButton from '@/components/TButton.vue';
 import { mergeTargets, mergeConfirmParams } from '@/common/personMerge';
 
 const props = defineProps({
