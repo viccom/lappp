@@ -51,6 +51,38 @@
     </div>
 
     <div class="mx-1 mb-2 px-1 shrink-0">
+      <!-- the last link, with a way back -->
+      <div
+        v-if="lastMerge"
+        class="mb-2 px-2 py-1.5 rounded-box text-xs bg-base-300/60 flex items-center gap-2"
+      >
+        <span class="flex-1 min-w-0 truncate text-base-content/70">
+          {{ $t('msgbox.merge_person.done', { count: lastMerge.count, name: lastMerge.targetName }) }}
+        </span>
+        <button class="btn btn-ghost btn-xs shrink-0" @click="undoLastMerge()">
+          {{ $t('menu.person.undo_merge') }}
+        </button>
+        <button class="btn btn-ghost btn-xs shrink-0" @click="lastMerge = null">
+          <IconClose class="w-3 h-3" />
+        </button>
+      </div>
+
+      <!-- the people picked for a link -->
+      <div
+        v-if="selectedIds.length > 0"
+        class="mb-2 px-2 py-1.5 rounded-box text-xs bg-base-300/60 flex items-center gap-2"
+      >
+        <span class="flex-1 min-w-0 truncate text-base-content/70">
+          {{ $t('menu.person.selected', { count: selectedIds.length }) }}
+        </span>
+        <button class="btn btn-ghost btn-xs shrink-0" @click="openMergeDialog()">
+          {{ $t('menu.person.merge_selected') }}
+        </button>
+        <button class="btn btn-ghost btn-xs shrink-0" @click="selectedIds = []">
+          {{ $t('msgbox.cancel') }}
+        </button>
+      </div>
+
       <div
         :class="[
           'h-8 flex items-center rounded-box transition-colors bg-base-100/40',
@@ -91,9 +123,10 @@
           <div
             :class="[
               'sidebar-item gap-2 group',
+              selectedIds.includes(person.id) ? 'sidebar-item-selected' : '',
               selectedPerson && selectedPerson.id === person.id && !isRenamingPerson ? 'sidebar-item-selected' : 'sidebar-item-hover',
             ]"
-            @click="selectPerson(person)"
+            @click="onRowClick(person, $event)"
             @contextmenu.prevent.stop="(e: MouseEvent) => handlePersonContextMenu(person, e)"
           >
             <!-- Face thumbnail -->
@@ -190,6 +223,15 @@
     @cancel="showResetFacesMsgbox = false"
   />
 
+  <!-- Link people to a name the user gave -->
+  <PersonMergeDialog
+    v-if="showMergeDialog"
+    :sources="mergeSources"
+    :targets="mergeTargetList"
+    @confirm="confirmMerge"
+    @cancel="showMergeDialog = false"
+  />
+
   <teleport to="body">
     <transition name="fade">
       <div
@@ -208,21 +250,25 @@
 import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { config, libConfig } from '@/common/config';
-import { getPersonsPage, renamePerson, deletePerson, indexFaces, cancelFaceIndex, isFaceIndexing, listenFaceIndexProgress, listenFaceIndexFinished, listenClusterProgress, resetFaces, getFaceStats } from '@/common/api';
+import { getPersonsPage, renamePerson, deletePerson, indexFaces, cancelFaceIndex, isFaceIndexing, listenFaceIndexProgress, listenFaceIndexFinished, listenClusterProgress, resetFaces, getFaceStats, listPersonTargets, mergePersons, moveFacesToNewPerson } from '@/common/api';
 import { useLibraryChangeRefresh } from '@/composables/useLibraryChangeRefresh';
 import { SIDEBAR, PERSON_PAGE_SIZE } from '@/common/constants';
-import { 
-  IconPerson, 
-  IconMore, 
-  IconRename, 
+import { pushMergeRecord, remapPersonRules, toggleSelection, rowAfterMerge } from '@/common/personMerge';
+import {
+  IconPerson,
+  IconMore,
+  IconRename,
   IconTrash,
   IconUpdate,
   IconClose,
   IconSearch,
+  IconLink,
+  IconHistory,
 } from '@/common/icons';
 
 import ContextMenu from '@/components/ContextMenu.vue';
 import MessageBox from '@/components/MessageBox.vue';
+import PersonMergeDialog from '@/components/PersonMergeDialog.vue';
 import SortMenuButton from '@/components/SortMenuButton.vue';
 
 const props = defineProps({
@@ -244,6 +290,11 @@ const selectedPerson = ref<any>(null);
 const isRenamingPerson = ref(false);
 const originalPersonName = ref('');
 const personInputRef = ref<HTMLInputElement[]>([]);
+// people picked for a link, and the link that was made last
+const selectedIds = ref<number[]>([]);
+const showMergeDialog = ref(false);
+const mergeTargetList = ref<any[]>([]);
+const lastMerge = ref<any>(null);
 const isIndexing = ref(false);
 const indexProgress = ref({
   current: 0,
@@ -325,6 +376,13 @@ const personPanelMenuItems = computed(() => [
     action: () => clickResetFaces(),
     disabled: isIndexing.value,
   },
+  { label: "-", action: null },
+  {
+    label: localeMsg.value.menu?.person?.undo_merge || 'Undo last link',
+    icon: IconHistory,
+    action: () => undoLastMerge(),
+    disabled: !libConfig.personMerges?.length,
+  },
 ]);
 
 // message boxes
@@ -345,6 +403,16 @@ const getMoreMenuItems = () => [
         }
       });
     }
+  },
+  { label: "-", action: null },
+  {
+    label: localeMsg.value.menu?.person?.merge || 'Link to an existing name…',
+    icon: IconLink,
+    action: () => {
+      // The row the menu was opened on is the one that gets linked.
+      selectedIds.value = toggleSelection(selectedIds.value, selectedPerson.value?.id);
+      openMergeDialog();
+    },
   },
   { label: "-", action: null },
   {
@@ -486,6 +554,65 @@ function selectPerson(person: any) {
   }
   libConfig.person.id = person.id;
   libConfig.person.name = person.name;
+}
+
+/// A plain click opens the person; ctrl or cmd picks people for a link.
+function onRowClick(person: any, event: MouseEvent) {
+  if (event.ctrlKey || event.metaKey) {
+    event.preventDefault();
+    selectedIds.value = toggleSelection(selectedIds.value, person.id);
+    return;
+  }
+  selectPerson(person);
+}
+
+/// The people the link can point at, minus the ones being linked.
+const mergeSources = computed(() =>
+  allPersons.value.filter((person) => selectedIds.value.includes(person.id))
+);
+
+async function openMergeDialog() {
+  if (selectedIds.value.length === 0) return;
+  const targets = await listPersonTargets();
+  if (!targets) return;
+  mergeTargetList.value = targets;
+  showMergeDialog.value = true;
+}
+
+async function confirmMerge(target: any) {
+  if (!target) return;
+  const sources = mergeSources.value;
+  const result = await mergePersons(sources.map((person) => person.id), target.id);
+  showMergeDialog.value = false;
+  if (!result) return;
+
+  // Remember the link so it can be undone, and point the rules that named a
+  // merged person at the person that survived.
+  const record = {
+    targetId: result.target_person_id,
+    targetName: target.name,
+    faceIds: result.moved_face_ids,
+    at: Math.floor(Date.now() / 1000),
+  };
+  libConfig.personMerges = pushMergeRecord(libConfig.personMerges, record);
+  const mergedIds = result.merged_person_ids;
+  libConfig.smartAlbums = remapPersonRules(libConfig.smartAlbums, mergedIds, record.targetId);
+  if (libConfig.person) {
+    libConfig.person.id = rowAfterMerge(libConfig.person.id, mergedIds, record.targetId);
+  }
+  selectedIds.value = [];
+  lastMerge.value = { ...record, count: mergedIds.length };
+  await loadPersons();
+}
+
+async function undoLastMerge() {
+  const record = libConfig.personMerges?.[0];
+  if (!record) return;
+  const personId = await moveFacesToNewPerson(record.faceIds);
+  if (!personId) return;
+  libConfig.personMerges = libConfig.personMerges.slice(1);
+  lastMerge.value = null;
+  await loadPersons();
 }
 
 async function handleRenamePerson() {

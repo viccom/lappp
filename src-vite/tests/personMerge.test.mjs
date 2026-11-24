@@ -6,6 +6,8 @@ import {
   mergeConfirmParams,
   pushMergeRecord,
   remapPersonRules,
+  toggleSelection,
+  rowAfterMerge,
 } from '../src/common/personMerge.js';
 
 // Names here are the stand-ins the design documents use.
@@ -150,4 +152,25 @@ test('remapPersonRules copes with albums that carry no rules', () => {
   const odd = [{ id: 'x' }, { id: 'y', query: {} }, null];
   assert.deepEqual(remapPersonRules(odd, [3], 2), odd);
   assert.deepEqual(remapPersonRules(undefined, [3], 2), undefined);
+});
+
+test('toggleSelection adds a row, takes it back, and never lists it twice', () => {
+  assert.deepEqual(toggleSelection([], 3), [3]);
+  assert.deepEqual(toggleSelection([3], 4), [3, 4]);
+  assert.deepEqual(toggleSelection([3, 4], 3), [4]);
+  assert.deepEqual(toggleSelection([3], 3), []);
+});
+
+test('toggleSelection leaves the list it was given alone', () => {
+  const before = [3];
+  toggleSelection(before, 4);
+  assert.deepEqual(before, [3]);
+  assert.deepEqual(toggleSelection(undefined, 4), [4]);
+});
+
+test('rowAfterMerge shows the target when the row that was open got linked away', () => {
+  assert.equal(rowAfterMerge(3, [3], 2), 2);
+  assert.equal(rowAfterMerge(9, [3], 2), 9);
+  assert.equal(rowAfterMerge(null, [3], 2), null);
+  assert.equal(rowAfterMerge(3, [], 2), 3);
 });

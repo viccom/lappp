@@ -68,6 +68,9 @@ export const useLibraryStore = defineStore('libraryStore', {
     smartAlbums: [],          // custom smart albums
     dedupPreferredFolderIds: /** @type {number[]} */ ([]),
 
+    /** @type {Array<{ targetId: number, targetName: string, faceIds: number[], at: number }>} */
+    personMerges: [],         // links between people, kept so they can be undone
+
     /** @type {{ selectedId: number | null, activateTick: number, counts: Record<string, number> }} */
     collection: {
       selectedId: null,      // selected collection id
@@ -295,6 +298,7 @@ export const useLibraryStore = defineStore('libraryStore', {
               failed: this.index.failed,
             },
               person: this.person,
+              personMerges: this.personMerges,
             };
 
           const payload = JSON.stringify(stateToSave);

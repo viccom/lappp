@@ -2334,6 +2334,45 @@ export async function deletePerson(personId) {
   return null;
 }
 
+// the people a link can point at: the ones the user named
+export async function listPersonTargets() {
+  try {
+    const result = await invoke('list_person_targets');
+    if (result) {
+      return result;
+    }
+  } catch (error) {
+    console.error('Failed to list the people to link to:', error);
+  }
+  return null;
+}
+
+// put the faces of the given people under the person that carries the name
+export async function mergePersons(personIds, targetPersonId) {
+  try {
+    const result = await invoke('merge_persons', { personIds, targetPersonId });
+    if (result) {
+      return result;
+    }
+  } catch (error) {
+    console.error('Failed to link people:', error);
+  }
+  return null;
+}
+
+// move faces into a person of their own, without a name: this undoes a link
+export async function moveFacesToNewPerson(faceIds) {
+  try {
+    const result = await invoke('move_faces_to_new_person', { faceIds });
+    if (result) {
+      return result;
+    }
+  } catch (error) {
+    console.error('Failed to move faces:', error);
+  }
+  return null;
+}
+
 // get faces for a file
 export async function getFacesForFile(fileId) {
   try {

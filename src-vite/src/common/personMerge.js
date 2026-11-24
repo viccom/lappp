@@ -27,7 +27,7 @@ export function isAutoPersonName(name) {
  *
  * @param {Array<{ id: number, name: string | null }>} [persons] every person row the panel knows
  * @param {{ excludeIds?: number[], query?: string }} [options]
- * @returns {Array<{ id: number, name: string | null }>}
+ * @returns {Array<any>}
  */
 export function mergeTargets(persons, options) {
   const { excludeIds = [], query = '' } = options ?? {};
@@ -81,7 +81,7 @@ function canBeUndone(record) {
  * @param {Array<object> | null | undefined} [records]
  * @param {object} record
  * @param {number} [cap]
- * @returns {Array<object>} a new list, or the unchanged input
+ * @returns {Array<{ targetId: number, targetName: string, faceIds: number[], at: number }>}
  */
 export function pushMergeRecord(records, record, cap = MAX_MERGE_RECORDS) {
   if (!canBeUndone(record)) return records ?? [];
@@ -122,4 +122,39 @@ export function remapPersonRules(smartAlbums, mergedPersonIds, targetPersonId) {
     return { ...album, query: { ...album.query, rules: nextRules } };
   });
   return changed ? next : smartAlbums;
+}
+
+// Stubs: the selection helpers are written next, behind their tests.
+const notImplemented = (name) => () => {
+  throw new Error(`personMerge.${name} is not implemented`);
+};
+
+/**
+ * Add a row to the selection, or take it back when it is already in.
+ * The list it was given is left alone.
+ *
+ * @param {number[] | null | undefined} [selectedIds]
+ * @param {number} personId
+ * @returns {number[]}
+ */
+export function toggleSelection(selectedIds, personId) {
+  const current = Array.isArray(selectedIds) ? selectedIds : [];
+  return current.includes(personId)
+    ? current.filter((id) => id !== personId)
+    : [...current, personId];
+}
+
+/**
+ * The row the people panel should show after a link: the target when the row
+ * that was open was linked away, the open row when it survived.
+ *
+ * @param {number | null} [openPersonId]
+ * @param {number[]} mergedPersonIds
+ * @param {number} targetPersonId
+ * @returns {number | null}
+ */
+export function rowAfterMerge(openPersonId, mergedPersonIds, targetPersonId) {
+  if (openPersonId == null) return null;
+  const merged = Array.isArray(mergedPersonIds) ? mergedPersonIds : [];
+  return merged.includes(openPersonId) ? targetPersonId : openPersonId;
 }
